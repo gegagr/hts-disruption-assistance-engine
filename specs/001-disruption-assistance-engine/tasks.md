@@ -142,13 +142,13 @@ each partner.
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] Implement `src/engine/variance.py`: `compute_variance(registry, bookings_df) -> VarianceView` — partner-level rows + per-partner route-level drilldown; uses `aggregates.weekly_aggregate` over the trailing window; computes margin impact as `(realised − priced) × payout_per_cancel × covered_bookings`; sets `hidden_by_blend` when |partner_realised − blended_realised| ≥ `material_gap_bps`.
-- [ ] T040 [US2] Test `tests/integration/test_variance_view.py`: hand-computed expected `gap_bps` for one partner matches; `margin_impact_cents` is negative when realised > priced; route drilldown sums to partner-level row; blended row exists.
-- [ ] T041 [US2] Implement `src/ui/variance.py`: Streamlit page with the per-partner table, drilldown expander per partner showing route-level table, blended row separator, visual badge for `hidden_by_blend=True` rows. No math.
-- [ ] T042 [US2] Wire the Variance tab in `src/ui/app.py` to render `src/ui/variance.py`.
-- [ ] T043 [US2] Implement initial `src/engine/consistency.py`: `check_consistency(views: dict) -> ConsistencyReport`. First check: `performance.blended.current.contribution_cents` reconciles with the contribution implied by `variance.rows` over the same window. Returns `ConsistencyReport`.
-- [ ] T044 [US2] Test `tests/consistency/test_cross_view_reconciliation.py` (first check only): on the seeded dataset, the variance↔performance reconciliation passes with zero discrepancy.
-- [ ] T045 [US2] Surface consistency banner in `src/ui/app.py`: red banner across all tabs when `ConsistencyReport.passed == False`.
+- [X] T039 [US2] Implement `src/engine/variance.py`: `compute_variance(registry, bookings_df) -> VarianceView` — partner-level rows + per-partner route-level drilldown; uses `aggregates.weekly_aggregate` over the trailing window; computes margin impact as `(realised − priced) × payout_per_cancel × covered_bookings`; sets `hidden_by_blend` when |partner_realised − blended_realised| ≥ `material_gap_bps`.
+- [X] T040 [US2] Test `tests/integration/test_variance_view.py`: hand-computed expected `gap_bps` for one partner matches; `margin_impact_cents` is negative when realised > priced; route drilldown sums to partner-level row; blended row exists.
+- [X] T041 [US2] Implement `src/ui/variance.py`: Streamlit page with the per-partner table, drilldown expander per partner showing route-level table, blended row separator, visual badge for `hidden_by_blend=True` rows. No math.
+- [X] T042 [US2] Wire the Variance tab in `src/ui/app.py` to render `src/ui/variance.py`.
+- [X] T043 [US2] Implement initial `src/engine/consistency.py`: `check_consistency(views: dict) -> ConsistencyReport`. First check: `performance.blended.current.contribution_cents` reconciles with the contribution implied by `variance.rows` over the same window. Returns `ConsistencyReport`.
+- [X] T044 [US2] Test `tests/consistency/test_cross_view_reconciliation.py` (first check only): on the seeded dataset, the variance↔performance reconciliation passes with zero discrepancy.
+- [X] T045 [US2] Surface consistency banner in `src/ui/app.py`: red banner across all tabs when `ConsistencyReport.passed == False`.
 
 **Checkpoint**: US2 is independently deliverable. Tool answers question 2
 ("Where is our pricing wrong?").

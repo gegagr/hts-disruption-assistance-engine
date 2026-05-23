@@ -13,9 +13,12 @@ import streamlit as st
 
 from src.config.loader import RegistryLoadError, load_registry
 from src.engine.briefing import Briefing, compute_briefing
+from src.engine.consistency import ConsistencyReport, check_consistency
 from src.engine.dataset import load_bookings, max_iso_week, regenerate
 from src.engine.performance import PerformanceView, compute_performance
+from src.engine.variance import VarianceView, compute_variance
 from src.ui import performance as performance_page
+from src.ui import variance as variance_page
 
 REGISTRY_PATH = Path(__file__).resolve().parents[2] / "config" / "registry.yaml"
 BOOKINGS_PARQUET = (
@@ -75,10 +78,15 @@ def main() -> None:
         st.rerun()
 
     # Engine
-    pv = _compute_performance_cached(_registry_hash(registry), as_of_week, llm_enabled)
-    briefing = _compute_briefing_cached(
-        _registry_hash(registry), as_of_week, llm_enabled
-    )
+    registry_fp = _registry_hash(registry)
+    pv = _compute_performance_cached(registry_fp, as_of_week, llm_enabled)
+    vv = _compute_variance_cached(registry_fp, as_of_week)
+    briefing = _compute_briefing_cached(registry_fp, as_of_week, llm_enabled)
+
+    # Consistency check (FR-027) — fail-loud banner across all tabs
+    consistency = _check_consistency_cached(registry_fp, as_of_week)
+    if not consistency.passed:
+        _render_consistency_banner(consistency)
 
     # Tabs
     tab_perf, tab_var, tab_ab, tab_proj = st.tabs(
@@ -87,11 +95,7 @@ def main() -> None:
     with tab_perf:
         performance_page.render(pv, briefing)
     with tab_var:
-        st.info(
-            "Variance view — coming in Phase 4 (US2). "
-            "The engine and presentation contracts are defined; "
-            "implementation is the next deliverable."
-        )
+        variance_page.render(vv)
     with tab_ab:
         st.info("A/B Test view — coming in Phase 5 (US3).")
     with tab_proj:
@@ -130,6 +134,41 @@ def _compute_briefing_cached(
     bookings = _load_bookings(str(BOOKINGS_PARQUET))
     pv = compute_performance(registry, bookings, as_of_week=as_of_week)
     return compute_briefing(pv, registry, force_template=not llm_enabled)
+
+
+@st.cache_data(show_spinner=False)
+def _compute_variance_cached(
+    _registry_fingerprint: str, as_of_week: int
+) -> VarianceView:
+    registry = load_registry(REGISTRY_PATH)
+    bookings = _load_bookings(str(BOOKINGS_PARQUET))
+    return compute_variance(registry, bookings, as_of_week=as_of_week)
+
+
+@st.cache_data(show_spinner=False)
+def _check_consistency_cached(
+    _registry_fingerprint: str, as_of_week: int
+) -> ConsistencyReport:
+    registry = load_registry(REGISTRY_PATH)
+    bookings = _load_bookings(str(BOOKINGS_PARQUET))
+    pv = compute_performance(registry, bookings, as_of_week=as_of_week)
+    vv = compute_variance(registry, bookings, as_of_week=as_of_week)
+    return check_consistency(performance=pv, variance=vv)
+
+
+def _render_consistency_banner(report: ConsistencyReport) -> None:
+    """FR-027 — surface a red banner when any cross-view check fails."""
+    st.error(
+        f"⚠ Consistency check FAILED ({len(report.discrepancies)} discrepancies). "
+        "Numbers across views disagree — investigate before trusting any single tile."
+    )
+    with st.expander("Discrepancy detail"):
+        for d in report.discrepancies:
+            st.markdown(
+                f"- **{d.check.name}**: `{d.check.lhs_label}` = "
+                f"{d.check.lhs_value:,} vs `{d.check.rhs_label}` = "
+                f"{d.check.rhs_value:,} (Δ {d.delta:+,})"
+            )
 
 
 if __name__ == "__main__":
