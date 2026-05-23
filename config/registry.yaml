@@ -1,0 +1,177 @@
+# Assumption registry — the single source of inputs for the engine.
+# Constitution Principle II: every input lives here, exactly once.
+# Constitution Principle III: every entry carries an `origin` tag.
+#
+# Origin values:
+#   measured-from-data | disclosed | observed | assumed
+
+dataset:
+  seed:
+    value: 20260101
+    origin: assumed
+    notes: "Fixed seed for deterministic synthetic data (SC-007)."
+  weeks:
+    value: 26
+    origin: assumed
+  start_date:
+    value: 2025-11-03
+    origin: assumed
+    notes: "Monday of week 0; chosen so ab.split_date (2026-02-02) lands mid-history."
+  seasonality_amplitude:
+    value: 0.2
+    origin: assumed
+    notes: "±20% weekly seasonality (sin curve over the year)."
+  partner_volumes:
+    value:
+      bank_portal: 3000
+      regional_carrier: 600
+      budget_carrier: 2000
+    origin: assumed
+    notes: "Average bookings per week per partner of each type (research §5 / spec assumptions)."
+  fare_mean_cents:
+    value:
+      domestic: 8000
+      short-haul intl: 18000
+      long-haul intl: 55000
+    origin: assumed
+    notes: "Mean fare in EUR cents per route type."
+  fare_sigma_cents:
+    value:
+      domestic: 2000
+      short-haul intl: 5000
+      long-haul intl: 18000
+    origin: assumed
+  baseline_attach_rate:
+    value:
+      bank_portal: 0.18
+      regional_carrier: 0.12
+      budget_carrier: 0.25
+    origin: assumed
+  baseline_realised_cancel_rate:
+    value:
+      bank_portal: 0.038
+      regional_carrier_a: 0.058
+      budget_carrier: 0.060
+    origin: assumed
+    notes: "Where realised > priced, the gap seeds the structural-vs-event-driven story."
+
+coverage_pct:
+  value: 0.85
+  origin: disclosed
+  source: "DA Product T&Cs §3.2 (signed 2025-09-01)"
+  notes: "Coverage applies to fare excluding taxes."
+
+payment_processing_pct:
+  value: 0.029
+  origin: observed
+  source: "Visa/Mastercard SEE interchange schedule, Q1 2026"
+
+servicing_cost_per_unit_cents:
+  value: 150
+  origin: assumed
+  notes: "Per-policy operating cost in EUR cents; refine when book matures."
+
+fee_level:
+  control_cents:
+    value: 1200
+    origin: disclosed
+    source: "Pricing committee 2025-11-04"
+  test_cents:
+    value: 900
+    origin: disclosed
+    source: "Pricing committee 2025-11-04"
+
+ab:
+  split_date:
+    value: 2026-02-02
+    origin: disclosed
+    source: "A/B test charter v1.2"
+  test_share_by_partner_type:
+    value:
+      bank_portal: 0.40
+      regional_carrier: 0.50
+      budget_carrier: 0.60
+    origin: assumed
+    notes: "Seeded imbalance so naive vs stratified A/B comparison is meaningful."
+
+partner:
+  bank_portal:
+    display_name: { value: "Bank Portal", origin: disclosed, source: "Partner agreement BP-2025-07" }
+    partner_type:        { value: bank_portal, origin: disclosed, source: "Partner agreement BP-2025-07" }
+    priced_cancel_rate:  { value: 0.035, origin: disclosed, source: "Pricing model v1, partner BP" }
+    route_exposure:
+      value: { domestic: 0.60, short-haul intl: 0.30, long-haul intl: 0.10 }
+      origin: observed
+      source: "BP booking history Q3 2025"
+    activation_week: { value: 0, origin: disclosed, source: "Partner agreement BP-2025-07" }
+    exit_week:       { value: null, origin: disclosed, source: "Partner agreement BP-2025-07" }
+  regional_carrier_a:
+    display_name: { value: "Regional Carrier A", origin: disclosed, source: "Partner agreement RC-A-2025-08" }
+    partner_type:        { value: regional_carrier, origin: disclosed, source: "Partner agreement RC-A-2025-08" }
+    priced_cancel_rate:  { value: 0.055, origin: disclosed, source: "Pricing model v1, partner RC-A" }
+    route_exposure:
+      value: { domestic: 0.20, short-haul intl: 0.70, long-haul intl: 0.10 }
+      origin: observed
+      source: "RC-A booking history Q3 2025"
+    activation_week: { value: 0, origin: disclosed, source: "Partner agreement RC-A-2025-08" }
+    exit_week:       { value: null, origin: disclosed, source: "Partner agreement RC-A-2025-08" }
+  budget_carrier:
+    display_name: { value: "Budget Carrier", origin: disclosed, source: "Partner agreement BC-2025-09" }
+    partner_type:        { value: budget_carrier, origin: disclosed, source: "Partner agreement BC-2025-09" }
+    priced_cancel_rate:  { value: 0.045, origin: disclosed, source: "Pricing model v1, partner BC" }
+    route_exposure:
+      value: { domestic: 0.10, short-haul intl: 0.80, long-haul intl: 0.10 }
+      origin: observed
+      source: "BC booking history Q3 2025"
+    activation_week: { value: 0, origin: disclosed, source: "Partner agreement BC-2025-09" }
+    exit_week:       { value: null, origin: disclosed, source: "Partner agreement BC-2025-09" }
+
+events:
+  value:
+    - id: adriatic_storms_w12_w13
+      label: "Adriatic storms (Wk 12–13)"
+      kind: weather
+      week_start: 12
+      week_end: 13
+      scope_partners: [regional_carrier_a, budget_carrier]
+      scope_route_types: ["short-haul intl"]
+      effect: { kind: LossRatioSpike, multiplier: 2.5 }
+    - id: strike_w17
+      label: "Air-traffic strike (Wk 17)"
+      kind: strike
+      week_start: 17
+      week_end: 17
+      scope_partners: null
+      scope_route_types: ["short-haul intl", "long-haul intl"]
+      effect: { kind: StrikeWeek, volume_multiplier: 0.4, cancel_multiplier: 3.0 }
+    - id: fare_compression_w20_w26
+      label: "Fare-compression shock (Wk 20–26)"
+      kind: fare_compression
+      week_start: 20
+      week_end: 26
+      scope_partners: null
+      scope_route_types: null
+      effect: { kind: FareCompression, fraction: 0.15 }
+  origin: assumed
+  notes: "Seeded for realistic variance; replace with real events when book is live."
+
+metrics:
+  trailing_window_weeks: { value: 13, origin: assumed }
+
+classification:
+  material_gap_bps:           { value: 200, origin: assumed }
+  persistence_weeks:          { value: 4,   origin: assumed }
+  event_revert_grace_weeks:   { value: 1,   origin: assumed }
+
+margin:
+  floor_bps:                       { value: 1500, origin: assumed }
+  approaching_floor_buffer_bps:    { value:  200, origin: assumed }
+
+projection:
+  weeks_forward: { value: 52,  origin: assumed }
+  trend_factor:  { value: 1.0, origin: assumed }
+
+briefing:
+  llm_enabled:   { value: true, origin: assumed }
+  llm_timeout_s: { value: 10.0, origin: assumed }
+  llm_model:     { value: "claude-sonnet-4-6", origin: assumed }

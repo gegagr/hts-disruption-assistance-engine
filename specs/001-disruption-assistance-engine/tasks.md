@@ -54,32 +54,32 @@ primitives every user story consumes.
 
 ### Assumption registry (Constitution Principles II & III)
 
-- [ ] T006 Author `config/registry.yaml` populating every key listed in `contracts/registry-schema.md` with the documented defaults and origin tags (coverage_pct, payment_processing_pct, servicing_cost_per_unit_cents, fee_level.{control,test}_cents, ab.split_date, three partner entries with priced_cancel_rate and route_exposure, three seeded events, classification/margin/projection/briefing/metrics blocks, dataset.seed)
-- [ ] T007 Implement `src/config/schema.py` with pydantic v2 models: `Origin` enum (closed set), `RegistryEntry` envelope with `source` required when `origin=="disclosed"` (model_validator), `PartnerConfig`, `EventConfig`, `Registry` frozen root model. Reject unknown top-level keys.
-- [ ] T008 Implement `src/config/loader.py`: `load_registry(path: str | Path) -> Registry` that parses YAML, validates against the schema, returns a frozen `Registry`. Raise with the exact key path on failure.
-- [ ] T009 [P] Test `tests/unit/test_registry_schema.py`: load valid registry (passes); missing `origin` (raises with path); `origin: disclosed` without `source` (raises); unknown top-level key (raises); `route_exposure` summing to 0.97 (raises); `coverage_pct` = 1.5 (raises)
+- [X] T006 Author `config/registry.yaml` populating every key listed in `contracts/registry-schema.md` with the documented defaults and origin tags (coverage_pct, payment_processing_pct, servicing_cost_per_unit_cents, fee_level.{control,test}_cents, ab.split_date, three partner entries with priced_cancel_rate and route_exposure, three seeded events, classification/margin/projection/briefing/metrics blocks, dataset.seed)
+- [X] T007 Implement `src/config/schema.py` with pydantic v2 models: `Origin` enum (closed set), `RegistryEntry` envelope with `source` required when `origin=="disclosed"` (model_validator), `PartnerConfig`, `EventConfig`, `Registry` frozen root model. Reject unknown top-level keys.
+- [X] T008 Implement `src/config/loader.py`: `load_registry(path: str | Path) -> Registry` that parses YAML, validates against the schema, returns a frozen `Registry`. Raise with the exact key path on failure.
+- [X] T009 [P] Test `tests/unit/test_registry_schema.py`: load valid registry (passes); missing `origin` (raises with path); `origin: disclosed` without `source` (raises); unknown top-level key (raises); `route_exposure` summing to 0.97 (raises); `coverage_pct` = 1.5 (raises)
 
 ### Data layer (facts)
 
-- [ ] T010 [P] Implement `src/data/schema.py`: pydantic v2 models `Partner`, `RouteType` (Literal), `Booking`, `MarketEvent`, `EventEffect` (tagged union: `LossRatioSpike`, `StrikeWeek`, `FareCompression`, `PartnerExit`). Include the validation invariants from data-model.md (`fee_cents is None ⇔ ancillary_purchased is False`, etc.)
-- [ ] T011 Implement `src/data/events.py`: `match_scope(event, partner_id, route_type, iso_week) -> bool` and `apply_effects(events, base_distributions) -> perturbed_distributions`. Stable event ordering by `id` for determinism.
-- [ ] T012 Implement `src/data/generator.py`: deterministic synthetic generator. Seed `numpy.random.Generator` from `registry.dataset.seed.value`. Generates ~150k bookings per the partner-type-shaped volume from `dataset.partner_volumes` with ±20% seasonality. Applies events via `events.py`. Writes Parquet to `data/generated/bookings.parquet` and `data/generated/partners.parquet`. Returns the in-memory `pd.DataFrame`s.
-- [ ] T013 Implement `src/cli/generate_data.py`: `python -m src.cli.generate_data` CLI that loads the registry, calls the generator, prints summary counts.
-- [ ] T014 [P] Test `tests/unit/test_data_generator_determinism.py`: run the generator twice with the same registry — assert resulting Parquet bytes are equal; assert booking-level invariants (payout = round(coverage_pct × fare) when both purchased and cancelled).
-- [ ] T015 [P] Test `tests/unit/test_events_scope.py`: global event (scope_partners=None, scope_route_types=None) matches all; local event matches only specified partners/routes; events outside their week window do not match.
+- [X] T010 [P] Implement `src/data/schema.py`: pydantic v2 models `Partner`, `RouteType` (Literal), `Booking`, `MarketEvent`, `EventEffect` (tagged union: `LossRatioSpike`, `StrikeWeek`, `FareCompression`, `PartnerExit`). Include the validation invariants from data-model.md (`fee_cents is None ⇔ ancillary_purchased is False`, etc.)
+- [X] T011 Implement `src/data/events.py`: `match_scope(event, partner_id, route_type, iso_week) -> bool` and `apply_effects(events, base_distributions) -> perturbed_distributions`. Stable event ordering by `id` for determinism.
+- [X] T012 Implement `src/data/generator.py`: deterministic synthetic generator. Seed `numpy.random.Generator` from `registry.dataset.seed.value`. Generates ~150k bookings per the partner-type-shaped volume from `dataset.partner_volumes` with ±20% seasonality. Applies events via `events.py`. Writes Parquet to `data/generated/bookings.parquet`. Returns the in-memory `pd.DataFrame`. [Note: partners.parquet not written — partners are loaded directly from registry per Principle II.]
+- [X] T013 Implement `src/cli/generate_data.py`: `python -m src.cli.generate_data` CLI that loads the registry, calls the generator, prints summary counts.
+- [X] T014 [P] Test `tests/unit/test_data_generator_determinism.py`: run the generator twice with the same registry — assert resulting Parquet bytes are equal; assert booking-level invariants (payout = round(coverage_pct × fare) when both purchased and cancelled).
+- [X] T015 [P] Test `tests/unit/test_events_scope.py`: global event (scope_partners=None, scope_route_types=None) matches all; local event matches only specified partners/routes; events outside their week window do not match.
 
 ### Engine primitives
 
-- [ ] T016 Implement `src/engine/derivations.py`: pure functions returning `int` (cents) or `float` — `payout_cents(coverage_pct, fare_cents)`, `cost_of_service_cents(fee_cents, payment_processing_pct, servicing_cost_per_unit_cents)`, `contribution_cents(revenue_cents, payouts_cents, cost_of_service_cents)`. Currency stays in integer cents end-to-end.
-- [ ] T017 [P] Test `tests/unit/test_derivations.py`: hand-computed cases for each derivation; rounding tied to banker's rounding via `round()` is acceptable (document choice).
-- [ ] T018 Implement `src/engine/metrics.py`: `attach_rate`, `loss_ratio`, `gross_margin_pct` over a `WeeklyAggregate` row; return `None` when denominator is zero (matches data-model.md).
-- [ ] T019 [P] Test `tests/unit/test_metrics.py`: zero-denominator returns `None`; standard cases match hand math.
-- [ ] T020 Implement `src/engine/aggregates.py`: `weekly_aggregate(bookings_df, registry, *, by_partner=True, by_route=False, by_arm=False) -> list[WeeklyAggregate]`. Stable sort by `(partner_id, iso_week, route_type, ab_arm)` for determinism. This is the function every view downstream consumes.
-- [ ] T021 [P] Test `tests/unit/test_aggregates.py`: row counts match expected partitioning; sums round-trip (booking-level revenue sums to weekly aggregate revenue).
+- [X] T016 Implement `src/engine/derivations.py`: pure functions returning `int` (cents) or `float` — `payout_cents(coverage_pct, fare_cents)`, `cost_of_service_cents(fee_cents, payment_processing_pct, servicing_cost_per_unit_cents)`, `contribution_cents(revenue_cents, payouts_cents, cost_of_service_cents)`. Currency stays in integer cents end-to-end.
+- [X] T017 [P] Test `tests/unit/test_derivations.py`: hand-computed cases for each derivation; rounding tied to banker's rounding via `round()` is acceptable (document choice).
+- [X] T018 Implement `src/engine/metrics.py`: `attach_rate`, `loss_ratio`, `gross_margin_pct` over a `WeeklyAggregate` row; return `None` when denominator is zero (matches data-model.md).
+- [X] T019 [P] Test `tests/unit/test_metrics.py`: zero-denominator returns `None`; standard cases match hand math.
+- [X] T020 Implement `src/engine/aggregates.py`: `weekly_aggregate(bookings_df, registry, *, by_partner=True, by_route=False, by_arm=False) -> list[WeeklyAggregate]`. Stable sort by `(partner_id, iso_week, route_type, ab_arm)` for determinism. This is the function every view downstream consumes.
+- [X] T021 [P] Test `tests/unit/test_aggregates.py`: row counts match expected partitioning; sums round-trip (booking-level revenue sums to weekly aggregate revenue).
 
 ### Layer-boundary enforcement (Constitution Principle IV)
 
-- [ ] T022 [P] Test `tests/unit/test_layer_boundaries.py`: AST-walk `src/ui/*.py` and `src/export/*.py` — fail if `pandas`, `numpy`, or `src.data` are imported. AST-walk `src/engine/*.py` — fail if `src.ui`, `src.export`, or `streamlit` are imported. AST-walk `src/data/*.py` — fail if `src.engine`, `src.ui`, or `src.export` are imported.
+- [X] T022 [P] Test `tests/unit/test_layer_boundaries.py`: AST-walk `src/ui/*.py` and `src/export/*.py` — fail if `pandas`, `numpy`, or `src.data` are imported. AST-walk `src/engine/*.py` — fail if `src.ui`, `src.export`, or `streamlit` are imported. AST-walk `src/data/*.py` — fail if `src.engine`, `src.ui`, or `src.export` are imported.
 
 **Checkpoint**: Foundation ready — registry loads, dataset generates, engine
 primitives compute correctly, layer boundaries enforced. User-story work
