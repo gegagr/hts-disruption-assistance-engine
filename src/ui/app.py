@@ -17,9 +17,11 @@ from src.engine.briefing import Briefing, compute_briefing
 from src.engine.consistency import ConsistencyReport, check_consistency
 from src.engine.dataset import load_bookings, max_iso_week, regenerate
 from src.engine.performance import PerformanceView, compute_performance
+from src.engine.projection import ProjectionView, compute_projection
 from src.engine.variance import VarianceView, compute_variance
 from src.ui import ab_test as ab_test_page
 from src.ui import performance as performance_page
+from src.ui import projection as projection_page
 from src.ui import variance as variance_page
 
 REGISTRY_PATH = Path(__file__).resolve().parents[2] / "config" / "registry.yaml"
@@ -84,6 +86,7 @@ def main() -> None:
     pv = _compute_performance_cached(registry_fp, as_of_week, llm_enabled)
     vv = _compute_variance_cached(registry_fp, as_of_week)
     ab = _compute_ab_cached(registry_fp, as_of_week)
+    pj = _compute_projection_cached(registry_fp, as_of_week)
     briefing = _compute_briefing_cached(registry_fp, as_of_week, llm_enabled)
 
     # Consistency check (FR-027) — fail-loud banner across all tabs
@@ -102,7 +105,7 @@ def main() -> None:
     with tab_ab:
         ab_test_page.render(ab)
     with tab_proj:
-        st.info("Projection view — coming in Phase 6 (US4).")
+        projection_page.render(pj)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +161,16 @@ def _compute_ab_cached(
 
 
 @st.cache_data(show_spinner=False)
+def _compute_projection_cached(
+    _registry_fingerprint: str, as_of_week: int
+) -> ProjectionView:
+    registry = load_registry(REGISTRY_PATH)
+    bookings = _load_bookings(str(BOOKINGS_PARQUET))
+    ab = compute_ab(registry, bookings, as_of_week=as_of_week)
+    return compute_projection(registry, bookings, ab, as_of_week=as_of_week)
+
+
+@st.cache_data(show_spinner=False)
 def _check_consistency_cached(
     _registry_fingerprint: str, as_of_week: int
 ) -> ConsistencyReport:
@@ -166,12 +179,14 @@ def _check_consistency_cached(
     pv = compute_performance(registry, bookings, as_of_week=as_of_week)
     vv = compute_variance(registry, bookings, as_of_week=as_of_week)
     ab = compute_ab(registry, bookings, as_of_week=as_of_week)
+    pj = compute_projection(registry, bookings, ab, as_of_week=as_of_week)
     return check_consistency(
         performance=pv,
         variance=vv,
         ab_test=ab,
         bookings=bookings,
         registry=registry,
+        projection=pj,
     )
 
 

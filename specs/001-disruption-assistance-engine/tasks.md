@@ -197,12 +197,12 @@ drivers exposed and origin-tagged. Same inputs ⇒ same outputs (SC-007).
 
 ### Implementation for User Story 4
 
-- [ ] T052 [US4] Implement `src/engine/projection.py`: `compute_projection(registry, bookings_df, ab_view) -> ProjectionView`. For each scenario ∈ {standardise_on_control, standardise_on_test} and each future week w ∈ [t+1, t+52], compute volume / attach / fee / cancel_rate / payout / cost via the formulas in research.md §7. Use trailing-13w mix-controlled values from `ab_view`. Build `ProjectionDriver` entries with origin tags and formulas. Freeze a `methodology_note` string sourced verbatim from research.md §7.
-- [ ] T053 [US4] Test `tests/integration/test_projection_view.py`: weekly cell reconciliation (`volume × attach × fee == revenue`); scenario total == sum of weeks; bit-equal serialisation across two `compute_projection` invocations on the same dataset; every driver has a non-empty `formula` and a valid `origin`.
-- [ ] T054 [US4] Implement `src/ui/projection.py`: Streamlit page with side-by-side scenario columns, weekly table with totals row, drivers panel at top with origin pills, methodology_note block. No math.
-- [ ] T055 [US4] Wire the Projection tab in `src/ui/app.py`.
-- [ ] T056 [US4] Extend `src/engine/consistency.py` with checks: (a) `projection.drivers[control].contribution_per_booking_cents` matches `ab_test.metrics[cpb].stratified[control]`; (b) for each scenario, `sum(projection.weekly[scenario])` == `projection.totals[scenario]`.
-- [ ] T057 [US4] Extend `tests/consistency/test_cross_view_reconciliation.py` to cover the projection consistency checks.
+- [X] T052 [US4] Implement `src/engine/projection.py`: `compute_projection(registry, bookings_df, ab_view) -> ProjectionView`. For each scenario ∈ {standardise_on_control, standardise_on_test} and each future week w ∈ [t+1, t+52], compute volume / attach / fee / cancel_rate / payout / cost via the formulas in research.md §7. Use trailing-13w mix-controlled values from `ab_view`. Build `ProjectionDriver` entries with origin tags and formulas. Freeze a `methodology_note` string sourced verbatim from research.md §7.
+- [X] T053 [US4] Test `tests/integration/test_projection_view.py`: weekly cell reconciliation (`volume × attach × fee == revenue`); scenario total == sum of weeks; bit-equal serialisation across two `compute_projection` invocations on the same dataset; every driver has a non-empty `formula` and a valid `origin`.
+- [X] T054 [US4] Implement `src/ui/projection.py`: Streamlit page with side-by-side scenario columns, weekly table with totals row, drivers panel at top with origin pills, methodology_note block. No math.
+- [X] T055 [US4] Wire the Projection tab in `src/ui/app.py`.
+- [X] T056 [US4] Extend `src/engine/consistency.py` with checks: (a) `projection.drivers[control].contribution_per_booking_cents` matches `ab_test.metrics[cpb].stratified[control]`; (b) for each scenario, `sum(projection.weekly[scenario])` == `projection.totals[scenario]`.
+- [X] T057 [US4] Extend `tests/consistency/test_cross_view_reconciliation.py` to cover the projection consistency checks.
 
 **Checkpoint**: US4 is independently deliverable. Tool closes the loop on
 the standardisation decision with forward-looking numbers.

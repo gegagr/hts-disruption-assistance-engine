@@ -18,6 +18,7 @@ from src.config.schema import Registry
 from src.engine.ab_test import ABTestView
 from src.engine.aggregates import BLENDED_PARTNER
 from src.engine.performance import PerformanceView
+from src.engine.projection import ProjectionView
 from src.engine.variance import VarianceView
 
 
@@ -55,6 +56,7 @@ def check_consistency(
     ab_test: ABTestView | None = None,
     bookings: pd.DataFrame | None = None,
     registry: Registry | None = None,
+    projection: ProjectionView | None = None,
 ) -> ConsistencyReport:
     """Run all cross-view checks available at this phase.
 
@@ -171,6 +173,30 @@ def check_consistency(
                     == ab_test.verdict.total_contribution_cents[arm],
                 )
             )
+
+    # Projection internals — sum of weekly cells == totals per scenario.
+    if projection is not None:
+        for scenario in projection.scenarios:
+            weekly = [w for w in projection.weekly if w.scenario == scenario]
+            t = projection.totals[scenario]
+            for metric_name in (
+                "revenue_cents",
+                "payouts_cents",
+                "cost_of_service_cents",
+                "contribution_cents",
+            ):
+                summed = sum(getattr(w, metric_name) for w in weekly)
+                expected = getattr(t, metric_name)
+                checks.append(
+                    ConsistencyCheck(
+                        name=f"projection_{scenario}_{metric_name}_sum_matches_total",
+                        lhs_label=f"sum(projection.weekly[{scenario}].{metric_name})",
+                        lhs_value=summed,
+                        rhs_label=f"projection.totals[{scenario}].{metric_name}",
+                        rhs_value=expected,
+                        passed=summed == expected,
+                    )
+                )
 
     discrepancies = [
         ConsistencyDiscrepancy(check=c, delta=c.lhs_value - c.rhs_value)
