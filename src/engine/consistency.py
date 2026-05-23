@@ -11,8 +11,11 @@ Checks land here incrementally as views ship:
 """
 from __future__ import annotations
 
+import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
+from src.config.schema import Registry
+from src.engine.ab_test import ABTestView
 from src.engine.aggregates import BLENDED_PARTNER
 from src.engine.performance import PerformanceView
 from src.engine.variance import VarianceView
@@ -49,14 +52,24 @@ def check_consistency(
     *,
     performance: PerformanceView,
     variance: VarianceView,
+    ab_test: ABTestView | None = None,
+    bookings: pd.DataFrame | None = None,
+    registry: Registry | None = None,
 ) -> ConsistencyReport:
     """Run all cross-view checks available at this phase.
 
     Both views derive from the same weekly aggregates, so the same booking
     facts MUST yield the same ancillary counts when summed over the same
-    trailing window.
+    trailing window. When ``ab_test``, ``bookings``, and ``registry`` are
+    also provided, A/B reconciliation checks run too.
     """
     checks: list[ConsistencyCheck] = []
+    registry_pp_pct = (
+        registry.payment_processing_pct.value if registry is not None else 0.0
+    )
+    registry_servicing = (
+        registry.servicing_cost_per_unit_cents.value if registry is not None else 0
+    )
 
     # Each partner: ancillaries_sold summed over the trailing window in
     # Performance MUST equal ancillaries_sold over the same window in Variance.
@@ -124,6 +137,41 @@ def check_consistency(
             )
         )
 
+    # A/B reconciliation — arm sizes and total contribution match raw bookings
+    if ab_test is not None and bookings is not None and registry is not None:
+        for arm in ("control", "test"):
+            arm_slice = bookings[
+                (bookings["ab_arm"] == arm)
+                & (bookings["iso_week"] <= ab_test.as_of_week)
+            ]
+            booking_count = int(len(arm_slice))
+            checks.append(
+                ConsistencyCheck(
+                    name=f"ab_{arm}_arm_size_matches_bookings",
+                    lhs_label=f"bookings[ab_arm={arm}, week<=as_of].count",
+                    lhs_value=booking_count,
+                    rhs_label=f"ab_test.arm_sizes[{arm}]",
+                    rhs_value=ab_test.arm_sizes[arm],
+                    passed=booking_count == ab_test.arm_sizes[arm],
+                )
+            )
+            # Recompute total contribution from raw bookings using the same
+            # primitives as ab_test, and compare to verdict.total_contribution.
+            recomputed = _arm_contribution_from_bookings(
+                arm_slice, registry_pp_pct, registry_servicing
+            )
+            checks.append(
+                ConsistencyCheck(
+                    name=f"ab_{arm}_total_contribution_matches_bookings",
+                    lhs_label=f"bookings[ab_arm={arm}] re-derived contribution",
+                    lhs_value=recomputed,
+                    rhs_label=f"ab_test.verdict.total_contribution_cents[{arm}]",
+                    rhs_value=ab_test.verdict.total_contribution_cents[arm],
+                    passed=recomputed
+                    == ab_test.verdict.total_contribution_cents[arm],
+                )
+            )
+
     discrepancies = [
         ConsistencyDiscrepancy(check=c, delta=c.lhs_value - c.rhs_value)
         for c in checks
@@ -134,3 +182,23 @@ def check_consistency(
         checks=checks,
         discrepancies=discrepancies,
     )
+
+
+def _arm_contribution_from_bookings(
+    arm_slice: pd.DataFrame, pp_pct: float, servicing: int
+) -> int:
+    """Re-derive contribution for one arm using the same primitives as ab_test."""
+    if len(arm_slice) == 0:
+        return 0
+    sold = arm_slice["ancillary_purchased"].fillna(False).astype(bool)
+    fee = arm_slice["fee_cents"].fillna(0).astype("int64")
+    payout = arm_slice["payout_cents"].fillna(0).astype("int64")
+    revenue = int(fee.where(sold, 0).sum())
+    payouts = int(payout.sum())
+    if sold.any():
+        cos_total = int(
+            ((fee[sold] * pp_pct).round().astype("int64") + servicing).sum()
+        )
+    else:
+        cos_total = 0
+    return revenue - payouts - cos_total

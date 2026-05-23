@@ -171,12 +171,12 @@ partner-level disagreement is named if seeded fixture has one;
 
 ### Implementation for User Story 3
 
-- [ ] T046 [US3] Implement `src/engine/ab_test.py`: `compute_ab(registry, bookings_df) -> ABTestView`. Compute reference mix freshly from pre-split bookings (NOT stored — Principle II). For each metric (attach_rate, loss_ratio, gross_margin_pct, contribution_per_booking_cents) produce naive aggregates over post-split bookings per arm AND stratified aggregates using partner×route cells weighted to the reference mix. Empty cells excluded with proportional redistribution recorded. Build `ABVerdict` (winner on contribution per booking, winner on total contribution, tradeoff_summary string, partner_disagreements list).
-- [ ] T047 [US3] Test `tests/integration/test_ab_test_view.py`: arm sizes match counts of `ab_arm == "control"` / `ab_arm == "test"` in bookings; stratified differs from naive when the seeded test arm overweights the high-cancel-rate partner; verdict.winner_on_total_contribution is deterministic on the fixture; reference_mix_origin == `measured-from-data`.
-- [ ] T048 [US3] Implement `src/ui/ab_test.py`: Streamlit page showing arm sizes, a metrics table with two columns (control / test) and rows for each metric in both naive and stratified blocks, the verdict prose, and the partner-disagreements table. No math.
-- [ ] T049 [US3] Wire the A/B Test tab in `src/ui/app.py`.
-- [ ] T050 [US3] Extend `src/engine/consistency.py` with check: `ab_test.metrics[contribution_per_booking].stratified.<arm>` is consistent with the per-arm aggregate computed independently from `aggregates.weekly_aggregate` filtered to that arm.
-- [ ] T051 [US3] Extend `tests/consistency/test_cross_view_reconciliation.py` to cover the A/B↔aggregates check.
+- [X] T046 [US3] Implement `src/engine/ab_test.py`: `compute_ab(registry, bookings_df) -> ABTestView`. Compute reference mix freshly from pre-split bookings (NOT stored — Principle II). For each metric (attach_rate, loss_ratio, gross_margin_pct, contribution_per_booking_cents) produce naive aggregates over post-split bookings per arm AND stratified aggregates using partner×route cells weighted to the reference mix. Empty cells excluded with proportional redistribution recorded. Build `ABVerdict` (winner on contribution per booking, winner on total contribution, tradeoff_summary string, partner_disagreements list).
+- [X] T047 [US3] Test `tests/integration/test_ab_test_view.py`: arm sizes match counts of `ab_arm == "control"` / `ab_arm == "test"` in bookings; stratified differs from naive when the seeded test arm overweights the high-cancel-rate partner; verdict.winner_on_total_contribution is deterministic on the fixture; reference_mix_origin == `measured-from-data`.
+- [X] T048 [US3] Implement `src/ui/ab_test.py`: Streamlit page showing arm sizes, a metrics table with two columns (control / test) and rows for each metric in both naive and stratified blocks, the verdict prose, and the partner-disagreements table. No math.
+- [X] T049 [US3] Wire the A/B Test tab in `src/ui/app.py`.
+- [X] T050 [US3] Extend `src/engine/consistency.py` with check: `ab_test.metrics[contribution_per_booking].stratified.<arm>` is consistent with the per-arm aggregate computed independently from `aggregates.weekly_aggregate` filtered to that arm.
+- [X] T051 [US3] Extend `tests/consistency/test_cross_view_reconciliation.py` to cover the A/B↔aggregates check.
 
 **Checkpoint**: US3 is independently deliverable. Tool gives present-tense
 evidence on question 3 ("Which fee level should we standardise on?").

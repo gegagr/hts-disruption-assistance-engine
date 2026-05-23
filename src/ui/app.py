@@ -12,11 +12,13 @@ from pathlib import Path
 import streamlit as st
 
 from src.config.loader import RegistryLoadError, load_registry
+from src.engine.ab_test import ABTestView, compute_ab
 from src.engine.briefing import Briefing, compute_briefing
 from src.engine.consistency import ConsistencyReport, check_consistency
 from src.engine.dataset import load_bookings, max_iso_week, regenerate
 from src.engine.performance import PerformanceView, compute_performance
 from src.engine.variance import VarianceView, compute_variance
+from src.ui import ab_test as ab_test_page
 from src.ui import performance as performance_page
 from src.ui import variance as variance_page
 
@@ -81,6 +83,7 @@ def main() -> None:
     registry_fp = _registry_hash(registry)
     pv = _compute_performance_cached(registry_fp, as_of_week, llm_enabled)
     vv = _compute_variance_cached(registry_fp, as_of_week)
+    ab = _compute_ab_cached(registry_fp, as_of_week)
     briefing = _compute_briefing_cached(registry_fp, as_of_week, llm_enabled)
 
     # Consistency check (FR-027) — fail-loud banner across all tabs
@@ -97,7 +100,7 @@ def main() -> None:
     with tab_var:
         variance_page.render(vv)
     with tab_ab:
-        st.info("A/B Test view — coming in Phase 5 (US3).")
+        ab_test_page.render(ab)
     with tab_proj:
         st.info("Projection view — coming in Phase 6 (US4).")
 
@@ -146,6 +149,15 @@ def _compute_variance_cached(
 
 
 @st.cache_data(show_spinner=False)
+def _compute_ab_cached(
+    _registry_fingerprint: str, as_of_week: int
+) -> ABTestView:
+    registry = load_registry(REGISTRY_PATH)
+    bookings = _load_bookings(str(BOOKINGS_PARQUET))
+    return compute_ab(registry, bookings, as_of_week=as_of_week)
+
+
+@st.cache_data(show_spinner=False)
 def _check_consistency_cached(
     _registry_fingerprint: str, as_of_week: int
 ) -> ConsistencyReport:
@@ -153,7 +165,14 @@ def _check_consistency_cached(
     bookings = _load_bookings(str(BOOKINGS_PARQUET))
     pv = compute_performance(registry, bookings, as_of_week=as_of_week)
     vv = compute_variance(registry, bookings, as_of_week=as_of_week)
-    return check_consistency(performance=pv, variance=vv)
+    ab = compute_ab(registry, bookings, as_of_week=as_of_week)
+    return check_consistency(
+        performance=pv,
+        variance=vv,
+        ab_test=ab,
+        bookings=bookings,
+        registry=registry,
+    )
 
 
 def _render_consistency_banner(report: ConsistencyReport) -> None:
