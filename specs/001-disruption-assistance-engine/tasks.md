@@ -37,11 +37,11 @@ config under `config/`, generated data under `data/generated/`.
 
 **Purpose**: project skeleton, dependencies, linting
 
-- [ ] T001 Create the directory tree per plan.md: `config/`, `data/generated/` (empty, gitignored), `src/{config,data,engine,export,ui,cli}/`, `tests/{unit,integration,consistency}/`, with `__init__.py` files in every `src/` and `tests/` package
-- [ ] T002 [P] Initialize `pyproject.toml` at repo root with Python 3.11 requirement and the dependency pins from research.md §13 (`pandas>=2.2,<3`, `numpy>=1.26,<3`, `pyarrow>=15`, `pydantic>=2.7,<3`, `pyyaml>=6`, `streamlit>=1.35,<2`, `openpyxl>=3.1,<4`, `jinja2>=3.1,<4`, `weasyprint>=62`, `matplotlib>=3.8`, `anthropic>=0.40`, `pytest>=8`, `ruff>=0.5`, `mypy>=1.10`)
-- [ ] T003 [P] Configure ruff and mypy in `pyproject.toml`: ruff enabled everywhere; mypy strict mode scoped to `src/engine/`, `src/config/`, and `src/data/schema.py`
-- [ ] T004 [P] Add `.gitignore` entries for `data/generated/`, `exports/`, `.venv/`, `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`
-- [ ] T005 [P] Add `pytest.ini` (or `[tool.pytest.ini_options]` in `pyproject.toml`) declaring `testpaths = ["tests"]` and `addopts = "-q --strict-markers"`
+- [X] T001 Create the directory tree per plan.md: `config/`, `data/generated/` (empty, gitignored), `src/{config,data,engine,export,ui,cli}/`, `tests/{unit,integration,consistency}/`, with `__init__.py` files in every `src/` and `tests/` package
+- [X] T002 [P] Initialize `pyproject.toml` at repo root with Python 3.11 requirement and the dependency pins from research.md §13 (`pandas>=2.2,<3`, `numpy>=1.26,<3`, `pyarrow>=15`, `pydantic>=2.7,<3`, `pyyaml>=6`, `streamlit>=1.35,<2`, `openpyxl>=3.1,<4`, `jinja2>=3.1,<4`, `weasyprint>=62`, `matplotlib>=3.8`, `anthropic>=0.40`, `pytest>=8`, `ruff>=0.5`, `mypy>=1.10`)
+- [X] T003 [P] Configure ruff and mypy in `pyproject.toml`: ruff enabled everywhere; mypy strict mode scoped to `src/engine/`, `src/config/`, and `src/data/schema.py`
+- [X] T004 [P] Add `.gitignore` entries for `data/generated/`, `exports/`, `.venv/`, `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.egg-info/`
+- [X] T005 [P] Add `pytest.ini` (or `[tool.pytest.ini_options]` in `pyproject.toml`) declaring `testpaths = ["tests"]` and `addopts = "-q --strict-markers"`
 
 ---
 
@@ -251,6 +251,7 @@ clean, manual acceptance walkthrough.
 - [ ] T071 [P] Validate `quickstart.md` by running its five-minute happy path end-to-end on a fresh checkout (clone, install, generate, launch, export); record any drift in the file.
 - [ ] T072 [P] Walk through every spec acceptance scenario (US1–US5) and tick them off against the running app + exports. Record any gap as a follow-up issue, not a silent fix.
 - [ ] T073 Update `CLAUDE.md` if any implementation surface diverged from the plan (paths, public function names). Otherwise leave as-is.
+- [ ] T074 [P] Test `tests/unit/test_no_hardcoded_literals.py`: AST-walk every `src/engine/*.py` file; fail the test if any `ast.Constant` of type `int` or `float` appears outside (a) the values `0` and `1`, (b) type annotations, (c) module-level dunder assignments (`__all__` indices etc.), (d) explicitly whitelisted lines marked with a `# noqa: literal` comment. Enforces Constitution Principle II + Engineering Constraint that no numeric input may be hardcoded in logic.
 
 ---
 

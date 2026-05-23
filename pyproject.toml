@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hts-see-finance-engine"
+version = "0.1.0"
+description = "HTS Disruption Assistance Performance Engine — internal finance tool for the SEE book."
+requires-python = ">=3.11,<3.13"
+readme = "README.md"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "pandas>=2.2,<3",
+    "numpy>=1.26,<3",
+    "pyarrow>=15",
+    "pydantic>=2.7,<3",
+    "pyyaml>=6",
+    "streamlit>=1.35,<2",
+    "openpyxl>=3.1,<4",
+    "jinja2>=3.1,<4",
+    "weasyprint>=62",
+    "matplotlib>=3.8",
+    "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pdfplumber>=0.11",
+    "beautifulsoup4>=4.12",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["data/generated", "exports"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E501",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["src.engine.*", "src.config.*", "src.data.schema"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["weasyprint.*", "pdfplumber.*", "matplotlib.*", "streamlit.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "consistency: cross-view reconciliation tests (FR-027)",
+    "determinism: bit-equal output tests (SC-007)",
+]

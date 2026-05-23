@@ -490,11 +490,13 @@ figure shown on screen plus the briefing.
 - **SC-002**: When the dataset contains a seeded event (e.g., a one-week
   storm spike on a regional carrier), the briefing correctly classifies the
   resulting partner-level loss-ratio movement as event-driven, NOT
-  structural, in ≥ 95% of seeded scenarios.
+  structural, on the listed seeded scenarios captured in
+  `tests/unit/test_classification.py`.
 - **SC-003**: When the dataset contains a sustained gap between priced and
   realised cancellation rate for a partner (≥ 4 consecutive weeks), the
-  briefing correctly classifies that partner as a structural pricing problem
-  in ≥ 95% of seeded scenarios.
+  briefing correctly classifies that partner as a structural pricing
+  problem on the listed seeded scenarios captured in
+  `tests/unit/test_classification.py`.
 - **SC-004**: The exported spreadsheet allows a user to change a single
   assumption-registry value and observe every dependent derived figure
   recompute in-place; the user does not need to re-export or re-run the tool.
