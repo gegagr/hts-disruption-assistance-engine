@@ -81,6 +81,12 @@ def main() -> None:
         st.cache_data.clear()
         st.rerun()
 
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Export current view set**")
+    if st.sidebar.button("Build XLSX + HTML"):
+        _run_export(as_of_week=as_of_week, llm_enabled=llm_enabled)
+    _render_download_links()
+
     # Engine
     registry_fp = _registry_hash(registry)
     pv = _compute_performance_cached(registry_fp, as_of_week, llm_enabled)
@@ -188,6 +194,57 @@ def _check_consistency_cached(
         registry=registry,
         projection=pj,
     )
+
+
+EXPORT_DIR = Path(__file__).resolve().parents[2] / "exports"
+
+
+def _run_export(*, as_of_week: int, llm_enabled: bool) -> None:
+    """Trigger the export CLI programmatically."""
+    from src.cli.export import main as cli_main
+
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    argv = [
+        "--xlsx",
+        "--html",
+        "--as-of-week",
+        str(as_of_week),
+        "--out",
+        str(EXPORT_DIR),
+    ]
+    if not llm_enabled:
+        argv.append("--no-llm")
+    rc = cli_main(argv)
+    if rc == 0:
+        st.sidebar.success(f"Exported to {EXPORT_DIR}")
+    elif rc == 2:
+        st.sidebar.error("Consistency check failed — no artefacts written.")
+    else:
+        st.sidebar.error(f"Export failed (exit code {rc}).")
+
+
+def _render_download_links() -> None:
+    """Offer download buttons for the most recent export artefacts."""
+    if not EXPORT_DIR.exists():
+        return
+    xlsx_files = sorted(EXPORT_DIR.glob("*.xlsx"), reverse=True)
+    html_files = sorted(EXPORT_DIR.glob("*.html"), reverse=True)
+    if xlsx_files:
+        latest = xlsx_files[0]
+        st.sidebar.download_button(
+            "Download latest XLSX",
+            data=latest.read_bytes(),
+            file_name=latest.name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    if html_files:
+        latest = html_files[0]
+        st.sidebar.download_button(
+            "Download latest HTML",
+            data=latest.read_bytes(),
+            file_name=latest.name,
+            mime="text/html",
+        )
 
 
 def _render_consistency_banner(report: ConsistencyReport) -> None:
