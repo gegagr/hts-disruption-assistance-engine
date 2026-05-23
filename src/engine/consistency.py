@@ -146,7 +146,7 @@ def check_consistency(
                 (bookings["ab_arm"] == arm)
                 & (bookings["iso_week"] <= ab_test.as_of_week)
             ]
-            booking_count = int(len(arm_slice))
+            booking_count = len(arm_slice)
             checks.append(
                 ConsistencyCheck(
                     name=f"ab_{arm}_arm_size_matches_bookings",

@@ -42,10 +42,10 @@ def test_weekly_cell_revenue_reconciles(view) -> None:
     fee_test = registry.fee_level.test_cents.value
     for week in pj.weekly:
         if week.scenario == "standardise_on_control":
-            expected_ancillaries = int(round(week.volume * attach_per_arm["control"]))
+            expected_ancillaries = round(week.volume * attach_per_arm["control"])
             expected_revenue = expected_ancillaries * fee_control
         else:
-            expected_ancillaries = int(round(week.volume * attach_per_arm["test"]))
+            expected_ancillaries = round(week.volume * attach_per_arm["test"])
             expected_revenue = expected_ancillaries * fee_test
         assert week.ancillaries == expected_ancillaries
         assert week.revenue_cents == expected_revenue

@@ -89,7 +89,9 @@ def compute_variance(
                 registry.partner[pid].priced_cancel_rate.value * sold
             )
             total_sold += sold
-        blended_priced_bps = _bps(priced_weighted / total_sold) if total_sold else 0
+        blended_priced_bps = (
+            _bps(priced_weighted / total_sold) or 0 if total_sold else 0
+        )
 
     # Per-partner rows
     partner_rows: list[VarianceRow] = []
@@ -97,7 +99,7 @@ def compute_variance(
     for pid in registry.partners():
         partner_cfg = registry.partner[pid]
         priced = partner_cfg.priced_cancel_rate.value
-        priced_bps = _bps(priced)
+        _bps(priced)
         partner_window = window[window["partner_id"] == pid]
         row = _variance_row(
             partner_id=pid,
@@ -112,7 +114,7 @@ def compute_variance(
         partner_rows.append(row)
         # Drilldown by route_type
         per_route: list[VarianceRow] = []
-        for rt in partner_cfg.route_exposure.value.keys():
+        for rt in partner_cfg.route_exposure.value:
             rt_slice = partner_window[partner_window["route_type"] == rt]
             per_route.append(
                 _variance_row(
@@ -166,7 +168,7 @@ def _variance_row(
     material_gap_bps: int,
 ) -> VarianceRow:
     sold = booking_slice[booking_slice["ancillary_purchased"].astype(bool)]
-    n_sold = int(len(sold))
+    n_sold = len(sold)
     n_cancelled = int(sold["cancelled"].astype(bool).sum())
     if n_sold == 0:
         return VarianceRow(
@@ -185,11 +187,9 @@ def _variance_row(
     realised = n_cancelled / n_sold
     realised_bps = _bps(realised) or 0
     gap_bps = realised_bps - (_bps(priced) or 0)
-    avg_fare_cents = int(round(sold["fare_cents"].mean()))
+    avg_fare_cents = round(sold["fare_cents"].mean())
     # Sign: negative when realised > priced (i.e., gap_bps > 0 ⇒ margin hurt)
-    margin_impact_cents = int(
-        round((priced - realised) * coverage_pct * avg_fare_cents * n_sold)
-    )
+    margin_impact_cents = round((priced - realised) * coverage_pct * avg_fare_cents * n_sold)
     hidden_by_blend = (
         blended_realised_bps is not None
         and abs(realised_bps - blended_realised_bps) >= material_gap_bps
@@ -216,21 +216,19 @@ def _blended_variance_row(
     coverage_pct: float,
     blended_realised_bps: int | None,
     blended_priced_bps: int,
-    material_gap_bps: int,  # noqa: ARG001
+    material_gap_bps: int,
 ) -> VarianceRow:
     sold = window[window["ancillary_purchased"].astype(bool)]
-    n_sold = int(len(sold))
+    n_sold = len(sold)
     n_cancelled = int(sold["cancelled"].astype(bool).sum())
     if n_sold == 0:
         avg_fare = 0
         margin_impact = 0
     else:
-        avg_fare = int(round(sold["fare_cents"].mean()))
+        avg_fare = round(sold["fare_cents"].mean())
         priced_blended = blended_priced_bps / 10_000
         realised_blended = (blended_realised_bps or 0) / 10_000
-        margin_impact = int(
-            round((priced_blended - realised_blended) * coverage_pct * avg_fare * n_sold)
-        )
+        margin_impact = round((priced_blended - realised_blended) * coverage_pct * avg_fare * n_sold)
     gap = (
         None
         if blended_realised_bps is None
@@ -254,7 +252,7 @@ def _blended_variance_row(
 def _bps(rate: float | None) -> int | None:
     if rate is None:
         return None
-    return int(round(rate * 10_000))
+    return round(rate * 10_000)
 
 
 # Silence unused-import warning when weekly_aggregate isn't directly referenced.

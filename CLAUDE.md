@@ -12,4 +12,9 @@ Supporting design artefacts in the same directory:
 
 Governing principles (non-negotiable):
 [.specify/memory/constitution.md](.specify/memory/constitution.md)
+
+Run the app: `streamlit run src/ui/app.py` (after `python -m src.cli.generate_data`).
+Run exports: `python -m src.cli.export --xlsx --html --no-llm --out exports/`.
+Tests: `pytest tests/` (107 unit + integration + consistency + determinism tests).
+Lint + type: `ruff check src/ tests/` and `mypy src/engine src/config src/data/schema.py`.
 <!-- SPECKIT END -->

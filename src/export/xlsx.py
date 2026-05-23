@@ -39,7 +39,7 @@ HEADER_FILL = PatternFill("solid", fgColor="F0F0F0")
 def write_workbook(
     *,
     registry: Registry,
-    bookings_df,  # noqa: ANN001 — pandas import allowed in export layer
+    bookings_df,
     performance: PerformanceView,
     variance: VarianceView,
     ab_test: ABTestView,

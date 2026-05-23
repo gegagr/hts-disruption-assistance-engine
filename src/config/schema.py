@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from src.data.schema import MarketEvent, PartnerType, RouteType
 

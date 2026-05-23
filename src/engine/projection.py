@@ -67,7 +67,7 @@ class ProjectionView(BaseModel):
     weeks_forward: int
     scenarios: list[Scenario]
     weekly: list[ProjectionWeek]
-    totals: dict[str, ProjectionTotals]            # scenario → totals
+    totals: dict[Scenario, ProjectionTotals]       # scenario → totals
     drivers: list[ProjectionDriver]
     methodology_note: str
 
@@ -144,12 +144,12 @@ def compute_projection(
         attach = attach_per_arm[arm]
         loss = loss_per_arm[arm]
         fee = fee_by_scenario[s]
-        cos_per_ancillary = int(round(fee * pp_pct)) + servicing
+        cos_per_ancillary = round(fee * pp_pct) + servicing
         for offset in range(1, weeks_forward + 1):
-            vol = int(round(weekly_volume))
-            ancillaries = int(round(vol * attach))
+            vol = round(weekly_volume)
+            ancillaries = round(vol * attach)
             revenue = ancillaries * fee
-            payouts = int(round(revenue * loss))
+            payouts = round(revenue * loss)
             cos_total = ancillaries * cos_per_ancillary
             contribution = revenue - payouts - cos_total
             weekly.append(

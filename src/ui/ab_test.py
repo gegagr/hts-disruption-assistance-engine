@@ -83,7 +83,7 @@ def _metric_row(m: ABComparison) -> dict[str, str]:
 
 def _fmt(metric: str, value: float, *, signed: bool = False) -> str:
     if metric == "contribution_per_booking_cents":
-        cents = int(round(value))
+        cents = round(value)
         return format_eur(cents) if not signed else f"{format_eur(cents)}"
     # rates: render as percentage
     pct = value * 100
@@ -103,8 +103,8 @@ def _render_disagreements(view: ABTestView) -> None:
             "Partner": d.display_name,
             "Blended winner": d.blended_winner,
             "Partner winner": d.partner_winner,
-            "Control CPB": format_eur(int(round(d.partner_control_cpb_cents))),
-            "Test CPB": format_eur(int(round(d.partner_test_cpb_cents))),
+            "Control CPB": format_eur(round(d.partner_control_cpb_cents)),
+            "Test CPB": format_eur(round(d.partner_test_cpb_cents)),
         }
         for d in view.verdict.partner_disagreements
     ]

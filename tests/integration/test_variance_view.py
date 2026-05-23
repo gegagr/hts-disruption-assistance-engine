@@ -32,9 +32,7 @@ def test_priced_rate_matches_registry(view) -> None:
     for r in vv.rows:
         if r.partner_id == BLENDED_PARTNER:
             continue
-        priced_expected = int(
-            round(registry.partner[r.partner_id].priced_cancel_rate.value * 10_000)
-        )
+        priced_expected = round(registry.partner[r.partner_id].priced_cancel_rate.value * 10_000)
         assert r.priced_cancel_rate_bps == priced_expected
 
 

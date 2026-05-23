@@ -69,11 +69,11 @@ def _driver_row(d: ProjectionDriver) -> dict[str, str]:
 
 def _fmt_driver_value(name: str, value: float) -> str:
     if "cents" in name and "stratified" not in name and "processing" not in name:
-        return format_eur(int(round(value)))
-    if "rate" in name or "ratio" in name or "pct" in name and "cents" not in name:
+        return format_eur(round(value))
+    if "rate" in name or "ratio" in name or ("pct" in name and "cents" not in name):
         return f"{value * 100:.2f}%"
     if "stratified" in name and "contribution_per_booking" in name:
-        return format_eur(int(round(value)))
+        return format_eur(round(value))
     return f"{value:,.4f}"
 
 

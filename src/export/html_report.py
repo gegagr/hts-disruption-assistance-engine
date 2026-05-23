@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from jinja2 import Environment, BaseLoader, select_autoescape
+from jinja2 import BaseLoader, Environment, select_autoescape
 
 from src.engine.ab_test import ABTestView
 from src.engine.briefing import Briefing
@@ -259,7 +259,7 @@ def _fmt_pct(value: float | None) -> str:
 
 def _fmt_metric(metric: str, value: float) -> str:
     if metric == "contribution_per_booking_cents":
-        return _fmt_eur(int(round(value)))
+        return _fmt_eur(round(value))
     return f"{value * 100:.2f}%"
 
 
@@ -267,9 +267,9 @@ def _fmt_driver(name: str, value: float) -> str:
     if "rate" in name or "ratio" in name or ("pct" in name and "cents" not in name):
         return f"{value * 100:.2f}%"
     if "cents" in name and "stratified" not in name:
-        return _fmt_eur(int(round(value)))
+        return _fmt_eur(round(value))
     if "stratified" in name and "contribution_per_booking" in name:
-        return _fmt_eur(int(round(value)))
+        return _fmt_eur(round(value))
     return f"{value:,.4f}"
 
 

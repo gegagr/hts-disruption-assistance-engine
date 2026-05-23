@@ -15,7 +15,7 @@ def test_no_anthropic_call_when_force_template(monkeypatch) -> None:
     """If we force template mode, no anthropic SDK code path is exercised."""
 
     # Sentinel: any attempt to construct an Anthropic client raises.
-    def fail(*args, **kwargs):  # noqa: ANN001
+    def fail(*args, **kwargs):
         raise RuntimeError("Anthropic must not be called in force_template mode")
 
     monkeypatch.setattr("src.engine.briefing.render_llm", fail)
@@ -31,7 +31,7 @@ def test_no_anthropic_call_when_force_template(monkeypatch) -> None:
 def test_llm_failure_falls_back_silently(monkeypatch) -> None:
     """An LLM exception must produce a template-mode Briefing, not propagate."""
 
-    def boom(pack, registry):  # noqa: ANN001
+    def boom(pack, registry):
         raise RuntimeError("simulated LLM outage")
 
     monkeypatch.setattr("src.engine.briefing.render_llm", boom)

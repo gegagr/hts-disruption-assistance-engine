@@ -61,7 +61,7 @@ def classify_partner(
             current_gap_bps=0,
         )
 
-    current_gap_bps = int(round((current_rate - priced_cancel_rate) * 10_000))
+    current_gap_bps = round((current_rate - priced_cancel_rate) * 10_000)
 
     # Active events: ones whose window (extended by the grace period) covers current_week
     active_events = sorted(
@@ -77,16 +77,19 @@ def classify_partner(
     if active_events and abs(current_gap_bps) >= material_gap_bps:
         first_event_start = min(ev.week_start for ev in active_events)
         pre_event_weeks = sorted(
-            w for w in weekly_realised_rates.keys() if w < first_event_start
+            w for w in weekly_realised_rates if w < first_event_start
         )
         recent_pre = pre_event_weeks[-persistence_weeks:]
-        pre_event_elevated = len(recent_pre) >= persistence_weeks and all(
-            weekly_realised_rates.get(w) is not None
-            and abs(
-                round((weekly_realised_rates[w] - priced_cancel_rate) * 10_000)
+        pre_event_elevated = (
+            len(recent_pre) >= persistence_weeks
+            and all(
+                _gap_above_threshold(
+                    weekly_realised_rates.get(w),
+                    priced_cancel_rate,
+                    material_gap_bps,
+                )
+                for w in recent_pre
             )
-            >= material_gap_bps
-            for w in recent_pre
         )
         if not pre_event_elevated:
             labels = "; ".join(ev.label for ev in active_events)
@@ -104,18 +107,15 @@ def classify_partner(
     # Structural check: gap above threshold for `persistence_weeks` consecutive
     # weeks ending at current_week.
     consecutive_weeks = sorted(
-        w for w in weekly_realised_rates.keys() if w <= current_week
+        w for w in weekly_realised_rates if w <= current_week
     )[-persistence_weeks:]
-    if (
-        len(consecutive_weeks) >= persistence_weeks
-        and all(
-            weekly_realised_rates.get(w) is not None
-            and abs(
-                round((weekly_realised_rates[w] - priced_cancel_rate) * 10_000)
-            )
-            >= material_gap_bps
-            for w in consecutive_weeks
+    if len(consecutive_weeks) >= persistence_weeks and all(
+        _gap_above_threshold(
+            weekly_realised_rates.get(w),
+            priced_cancel_rate,
+            material_gap_bps,
         )
+        for w in consecutive_weeks
     ):
         return PartnerClassification(
             partner_id=partner_id,
@@ -147,6 +147,17 @@ def classify_partner(
         matched_event_ids=[],
         current_gap_bps=current_gap_bps,
     )
+
+
+def _gap_above_threshold(
+    realised: float | None,
+    priced: float,
+    threshold_bps: int,
+) -> bool:
+    """True iff realised is known AND |realised − priced| ≥ threshold (bps)."""
+    if realised is None:
+        return False
+    return abs(round((realised - priced) * 10_000)) >= threshold_bps
 
 
 def _partner_in_scope(

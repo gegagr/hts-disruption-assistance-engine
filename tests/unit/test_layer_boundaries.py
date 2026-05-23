@@ -13,8 +13,8 @@ violation, naming the file and the offending import.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 from collections.abc import Iterable
+from pathlib import Path
 
 import pytest
 

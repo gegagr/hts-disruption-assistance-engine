@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
-
 from src.config.loader import load_registry
 from src.data.generator import generate_dataset
 from src.engine.aggregates import BLENDED_PARTNER, weekly_aggregate

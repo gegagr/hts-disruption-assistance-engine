@@ -25,7 +25,7 @@ from pydantic import Field as PyField
 from src.config.schema import Registry
 from src.engine.briefing_prompts import SYSTEM_PROMPT
 from src.engine.classification import PartnerClassification
-from src.engine.performance import PerformanceView
+from src.engine.performance import PartnerStatus, PerformanceView
 
 log = logging.getLogger(__name__)
 
@@ -169,9 +169,7 @@ def build_evidence_pack(
                 prior_loss_ratio_bps=prior_lr_bps,
                 loss_ratio_delta_bps=lr_delta,
                 current_cancel_rate_bps=current_cancel_bps,
-                priced_cancel_rate_bps=int(
-                    round(partner_cfg.priced_cancel_rate.value * 10_000)
-                ),
+                priced_cancel_rate_bps=round(partner_cfg.priced_cancel_rate.value * 10_000),
                 cancel_gap_bps=cls.current_gap_bps,
                 margin_distance_from_floor_bps=status.margin_distance_from_floor_bps,
                 classification=cls.classification,
@@ -244,13 +242,15 @@ def build_evidence_pack(
 def _bps(x: float | None) -> int | None:
     if x is None:
         return None
-    return int(round(x * 10_000))
+    return round(x * 10_000)
 
 
-def _partner_current_cancel_rate(status) -> float | None:
+def _partner_current_cancel_rate(status: PartnerStatus) -> float | None:
     if status.current.ancillaries_sold == 0:
         return None
-    return status.current.ancillaries_cancelled / status.current.ancillaries_sold
+    return float(
+        status.current.ancillaries_cancelled / status.current.ancillaries_sold
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +374,7 @@ def render_llm(
     HTTP failure, timeout, JSON parse error, schema validation failure).
     """
     try:
-        from anthropic import Anthropic  # type: ignore[import-untyped]
+        from anthropic import Anthropic
     except ImportError as exc:
         raise RuntimeError("anthropic SDK not installed") from exc
 
@@ -387,7 +387,7 @@ def render_llm(
     try:
         message = client.messages.create(
             model=registry.briefing.llm_model.value,
-            max_tokens=2000,
+            max_tokens=2000,  # allow: literal — SDK token budget, not a model input
             system=[
                 {
                     "type": "text",
@@ -414,11 +414,13 @@ def render_llm(
             ],
             timeout=registry.briefing.llm_timeout_s.value,
         )
-    except Exception as exc:  # noqa: BLE001 — wrap all SDK errors uniformly
+    except Exception as exc:
         raise RuntimeError(f"LLM call failed: {exc}") from exc
 
     text = "".join(
-        block.text for block in message.content if getattr(block, "type", "") == "text"
+        getattr(block, "text", "")
+        for block in message.content
+        if getattr(block, "type", "") == "text"
     ).strip()
     text = _strip_code_fence(text)
     try:
@@ -446,37 +448,44 @@ def _strip_code_fence(s: str) -> str:
 # Reference substitution + headline checks
 # ---------------------------------------------------------------------------
 
+def _coerce(value: Any) -> int | str | None:
+    """Narrow getattr's Any to the renderer's allowed return types."""
+    if value is None or isinstance(value, (int, str)):
+        return value
+    return str(value)
+
+
 def _ref_value(pack: BriefingEvidencePack, ref_id: str) -> int | str | None:
     """Resolve an EvidenceId to its value in *pack*."""
     parts = ref_id.split(".")
     if not parts:
         raise KeyError(ref_id)
     root = parts[0]
-    if root == "partner" and len(parts) >= 3:
+    if root == "partner" and len(parts) >= 3:  # allow: literal — dot-segment count
         pid, field = parts[1], ".".join(parts[2:])
         for pe in pack.partners:
             if pe.partner_id == pid:
                 if hasattr(pe, field):
-                    return getattr(pe, field)
+                    return _coerce(getattr(pe, field))
                 raise KeyError(ref_id)
-    if root == "event" and len(parts) >= 3:
+    if root == "event" and len(parts) >= 3:  # allow: literal — dot-segment count
         eid, field = parts[1], ".".join(parts[2:])
         for ev in pack.events:
             if ev.event_id == eid:
                 if hasattr(ev, field):
-                    return getattr(ev, field)
+                    return _coerce(getattr(ev, field))
                 raise KeyError(ref_id)
-    if root == "floor" and len(parts) >= 3:
+    if root == "floor" and len(parts) >= 3:  # allow: literal — dot-segment count
         pid, field = parts[1], ".".join(parts[2:])
         for fl in pack.floors:
             if fl.partner_id == pid:
                 if hasattr(fl, field):
-                    return getattr(fl, field)
+                    return _coerce(getattr(fl, field))
                 raise KeyError(ref_id)
     if root == "blended":
         field = ".".join(parts[1:])
         if hasattr(pack, field):
-            return getattr(pack, field)
+            return _coerce(getattr(pack, field))
     raise KeyError(ref_id)
 
 
@@ -492,12 +501,12 @@ def render(narrative: BriefingNarrative, pack: BriefingEvidencePack) -> str:
         )
 
     lines = [narrative.headline_sentence]
-    for callout in narrative.partner_callouts:
-        lines.append("• " + _substitute(callout.text_template, pack))
-    for callout in narrative.event_callouts:
-        lines.append("• " + _substitute(callout.text_template, pack))
-    for callout in narrative.floor_callouts:
-        lines.append("⚠ " + _substitute(callout.text_template, pack))
+    for partner_callout in narrative.partner_callouts:
+        lines.append("• " + _substitute(partner_callout.text_template, pack))
+    for event_callout in narrative.event_callouts:
+        lines.append("• " + _substitute(event_callout.text_template, pack))
+    for floor_callout in narrative.floor_callouts:
+        lines.append("⚠ " + _substitute(floor_callout.text_template, pack))
     return "\n".join(lines)
 
 

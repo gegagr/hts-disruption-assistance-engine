@@ -119,12 +119,12 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 
 @st.cache_data(show_spinner=False)
-def _load_bookings(parquet_path: str):  # noqa: ANN201
+def _load_bookings(parquet_path: str):
     """Load bookings via the engine-layer adapter (Principle IV)."""
     return load_bookings(Path(parquet_path).parent)
 
 
-def _registry_hash(registry) -> str:  # noqa: ANN001
+def _registry_hash(registry) -> str:
     """Cheap fingerprint for cache key."""
     return registry.model_dump_json()
 

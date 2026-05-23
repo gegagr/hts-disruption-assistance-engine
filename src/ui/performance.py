@@ -10,12 +10,10 @@ import streamlit as st
 from src.engine.briefing import Briefing
 from src.engine.performance import PartnerStatus, PerformanceView
 from src.ui.components import (
-    figure,
     format_bps,
     format_eur,
     format_pct,
     mode_badge,
-    origin_pill,
     status_pill,
 )
 

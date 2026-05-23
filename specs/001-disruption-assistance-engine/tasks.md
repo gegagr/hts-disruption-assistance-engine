@@ -244,14 +244,14 @@ tool now satisfies the entire "DONE looks like" paragraph from the spec.
 **Purpose**: full reconciliation coverage, end-to-end determinism, lint
 clean, manual acceptance walkthrough.
 
-- [ ] T067 In `src/ui/app.py` and `src/cli/export.py`, ensure `check_consistency(views)` runs on every dataset load and before every export; the export CLI exits 2 if it fails.
-- [ ] T068 [P] Test `tests/consistency/test_cross_view_reconciliation.py` final pass: all four mandated FR-027 checks (perf↔variance contribution; perf↔weekly aggregate per partner; AB↔aggregates; projection weekly sums == totals) pass with zero discrepancy on the seeded dataset.
-- [ ] T069 [P] Test `tests/integration/test_determinism.py` (SC-007): run the full pipeline twice from a fresh process — load registry, generate dataset, compute all four views and briefing in `template` mode, serialise — assert byte-equal serialised engine outputs across runs.
-- [ ] T070 [P] Run `ruff check` clean across the codebase; run `mypy src/engine src/config src/data/schema.py` clean (strict mode).
-- [ ] T071 [P] Validate `quickstart.md` by running its five-minute happy path end-to-end on a fresh checkout (clone, install, generate, launch, export); record any drift in the file.
-- [ ] T072 [P] Walk through every spec acceptance scenario (US1–US5) and tick them off against the running app + exports. Record any gap as a follow-up issue, not a silent fix.
-- [ ] T073 Update `CLAUDE.md` if any implementation surface diverged from the plan (paths, public function names). Otherwise leave as-is.
-- [ ] T074 [P] Test `tests/unit/test_no_hardcoded_literals.py`: AST-walk every `src/engine/*.py` file; fail the test if any `ast.Constant` of type `int` or `float` appears outside (a) the values `0` and `1`, (b) type annotations, (c) module-level dunder assignments (`__all__` indices etc.), (d) explicitly whitelisted lines marked with a `# noqa: literal` comment. Enforces Constitution Principle II + Engineering Constraint that no numeric input may be hardcoded in logic.
+- [X] T067 In `src/ui/app.py` and `src/cli/export.py`, ensure `check_consistency(views)` runs on every dataset load and before every export; the export CLI exits 2 if it fails.
+- [X] T068 [P] Test `tests/consistency/test_cross_view_reconciliation.py` final pass: all four mandated FR-027 checks (perf↔variance contribution; perf↔weekly aggregate per partner; AB↔aggregates; projection weekly sums == totals) pass with zero discrepancy on the seeded dataset.
+- [X] T069 [P] Test `tests/integration/test_determinism.py` (SC-007): run the full pipeline twice from a fresh process — load registry, generate dataset, compute all four views and briefing in `template` mode, serialise — assert byte-equal serialised engine outputs across runs.
+- [X] T070 [P] Run `ruff check` clean across the codebase; run `mypy src/engine src/config src/data/schema.py` clean (strict mode).
+- [X] T071 [P] Validate `quickstart.md` by running its five-minute happy path end-to-end on a fresh checkout (clone, install, generate, launch, export); record any drift in the file.
+- [X] T072 [P] Walk through every spec acceptance scenario (US1–US5) and tick them off against the running app + exports. Record any gap as a follow-up issue, not a silent fix.
+- [X] T073 Update `CLAUDE.md` if any implementation surface diverged from the plan (paths, public function names). Otherwise leave as-is.
+- [X] T074 [P] Test `tests/unit/test_no_hardcoded_literals.py`: AST-walk every `src/engine/*.py` file; fail the test if any `ast.Constant` of type `int` or `float` appears outside (a) the values `0` and `1`, (b) type annotations, (c) module-level dunder assignments (`__all__` indices etc.), (d) explicitly whitelisted lines marked with a `# noqa: literal` comment. Enforces Constitution Principle II + Engineering Constraint that no numeric input may be hardcoded in logic.
 
 ---
 

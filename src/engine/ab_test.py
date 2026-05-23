@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict
 
 from src.config.schema import Registry
 from src.data.schema import RouteType
-from src.engine.derivations import cost_of_service_cents
 
 Arm = Literal["control", "test"]
 WinnerLabel = Literal["control", "test", "tie"]
@@ -154,13 +153,13 @@ def compute_ab(
         arm: int(post.loc[post["ab_arm"] == arm, "contribution_cents"].sum())
         for arm in ("control", "test")
     }
-    winner_total = (
-        "test"
-        if total_contribution["test"] > total_contribution["control"]
-        else "control"
-        if total_contribution["control"] > total_contribution["test"]
-        else "tie"
-    )
+    winner_total: WinnerLabel
+    if total_contribution["test"] > total_contribution["control"]:
+        winner_total = "test"
+    elif total_contribution["control"] > total_contribution["test"]:
+        winner_total = "control"
+    else:
+        winner_total = "tie"
     partner_disagreements = _partner_disagreements(
         registry=registry,
         post=post,
@@ -194,10 +193,11 @@ def _reference_mix(pre: pd.DataFrame) -> dict[str, float]:
         return {}
     total = len(pre)
     grouped = pre.groupby(["partner_id", "route_type"], observed=True).size()
-    return {
-        f"{pid}|{rt}": int(n) / total
-        for (pid, rt), n in grouped.items()
-    }
+    out: dict[str, float] = {}
+    for key, n in grouped.items():
+        pid, rt = str(key[0]), str(key[1])  # type: ignore[index]
+        out[f"{pid}|{rt}"] = int(n) / total
+    return out
 
 
 def _annotate_financials(
@@ -225,7 +225,8 @@ def _cell_metrics(post: pd.DataFrame) -> dict[tuple[str, str, str], dict[str, fl
     """Per-arm × partner × route metric values."""
     out: dict[tuple[str, str, str], dict[str, float]] = {}
     grouped = post.groupby(["ab_arm", "partner_id", "route_type"], observed=True)
-    for (arm, pid, rt), cell in grouped:
+    for key, cell in grouped:
+        arm, pid, rt = str(key[0]), str(key[1]), str(key[2])
         bookings_n = len(cell)
         sold_n = int(cell["sold"].sum())
         revenue = int(cell["revenue_cents"].sum())

@@ -16,7 +16,7 @@ def payout_cents(coverage_pct: float, fare_cents: int) -> int:
 
     FR-007 canonical derivation.
     """
-    return int(round(coverage_pct * fare_cents))
+    return round(coverage_pct * fare_cents)
 
 
 def cost_of_service_cents(
@@ -29,7 +29,7 @@ def cost_of_service_cents(
     = (fee × payment_processing_pct) + servicing_cost_per_unit_cents.
     Clarification 2026-05-23 (Q3).
     """
-    processing = int(round(fee_cents * payment_processing_pct))
+    processing = round(fee_cents * payment_processing_pct)
     return processing + servicing_cost_per_unit_cents
 
 

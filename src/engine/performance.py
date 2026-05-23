@@ -260,14 +260,14 @@ def _wow_deltas(
 def _bps_delta(curr: float | None, prev: float | None) -> int | None:
     if curr is None or prev is None:
         return None
-    return int(round((curr - prev) * 10_000))
+    return round((curr - prev) * 10_000)
 
 
 def _gross_margin_bps(agg: WeeklyAggregate) -> int | None:
     pct = gross_margin_pct(agg.gross_margin_cents, agg.revenue_cents)
     if pct is None:
         return None
-    return int(round(pct * 10_000))
+    return round(pct * 10_000)
 
 
 def _margin_distance_bps(agg: WeeklyAggregate, floor_bps: int) -> int:

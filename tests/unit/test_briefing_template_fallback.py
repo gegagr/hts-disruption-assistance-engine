@@ -36,7 +36,7 @@ def test_template_render_is_byte_equal_at_storm_week() -> None:
 
 
 def test_template_render_byte_equal_outside_event_window() -> None:
-    a, b, pack = _briefing_template_text(as_of_week=10)
+    a, b, _pack = _briefing_template_text(as_of_week=10)
     assert a.model_dump_json() == b.model_dump_json()
 
 

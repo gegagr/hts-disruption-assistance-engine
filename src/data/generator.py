@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -23,9 +24,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config.schema import Registry
-from src.data.events import matching_events
 from src.data.schema import (
-    ROUTE_TYPES,
     FareCompression,
     LossRatioSpike,
     MarketEvent,
@@ -33,7 +32,6 @@ from src.data.schema import (
     RouteType,
     StrikeWeek,
 )
-
 
 _BOOKING_COLUMNS = [
     "booking_id",
@@ -69,7 +67,7 @@ def generate_dataset(
         Set False to skip Parquet writing (used in tests).
     """
     rng = np.random.default_rng(registry.dataset.seed.value)
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
 
     weeks = registry.dataset.weeks.value
     start_date: date = registry.dataset.start_date.value
@@ -118,7 +116,7 @@ def generate_dataset(
             for ev in week_events:
                 if isinstance(ev.effect, StrikeWeek):
                     volume *= ev.effect.volume_multiplier
-            n_bookings = max(0, int(round(volume)))
+            n_bookings = max(0, round(volume))
 
             for idx in range(n_bookings):
                 booking_id = f"{partner_id}-w{iso_week:03d}-b{idx:06d}"
@@ -128,16 +126,15 @@ def generate_dataset(
                 # Fare draw — normal, floored at 1000 cents (€10).
                 fare = max(
                     1000,
-                    int(round(rng.normal(fare_mean[route_type], fare_sigma[route_type]))),
+                    round(rng.normal(fare_mean[route_type], fare_sigma[route_type])),
                 )
                 # Fare compression event
                 for ev in week_events:
-                    if isinstance(ev.effect, FareCompression):
-                        if (
-                            ev.scope_route_types is None
-                            or route_type in ev.scope_route_types
-                        ):
-                            fare = int(round(fare * (1.0 - ev.effect.fraction)))
+                    if isinstance(ev.effect, FareCompression) and (
+                        ev.scope_route_types is None
+                        or route_type in ev.scope_route_types
+                    ):
+                        fare = round(fare * (1.0 - ev.effect.fraction))
 
                 # Booking & departure dates
                 week_monday = start_date + timedelta(days=iso_week * 7)
@@ -174,7 +171,7 @@ def generate_dataset(
 
                 fee_cents = fee_for_arm if ancillary_purchased else None
                 payout_cents = (
-                    int(round(coverage_pct * fare))
+                    round(coverage_pct * fare)
                     if (ancillary_purchased and cancelled)
                     else None
                 )
@@ -208,7 +205,7 @@ def generate_dataset(
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         table = pa.Table.from_pandas(df, preserve_index=False)
-        pq.write_table(
+        pq.write_table(  # type: ignore[no-untyped-call]
             table,
             out / "bookings.parquet",
             compression="snappy",

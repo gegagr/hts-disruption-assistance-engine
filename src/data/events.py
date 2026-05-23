@@ -19,9 +19,7 @@ def event_matches(
         return False
     if event.scope_partners is not None and partner_id not in event.scope_partners:
         return False
-    if event.scope_route_types is not None and route_type not in event.scope_route_types:
-        return False
-    return True
+    return not (event.scope_route_types is not None and route_type not in event.scope_route_types)
 
 
 def matching_events(
