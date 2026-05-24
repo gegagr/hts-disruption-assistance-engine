@@ -105,7 +105,7 @@ def main() -> None:
         ["Performance", "Variance", "A/B Test", "Projection"]
     )
     with tab_perf:
-        performance_page.render(pv, briefing)
+        performance_page.render(pv, briefing, registry)
     with tab_var:
         variance_page.render(vv)
     with tab_ab:

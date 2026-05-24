@@ -5,10 +5,13 @@ Constitution Principle IV: NO computation. Renders the typed
 """
 from __future__ import annotations
 
+import plotly.graph_objects as go
 import streamlit as st
 
+from src.config.schema import Registry
 from src.engine.briefing import Briefing
 from src.engine.performance import PartnerStatus, PerformanceView
+from src.engine.pnl_flow import PnlFlow, build_pnl_flow
 from src.ui.components import (
     format_bps,
     format_eur,
@@ -18,7 +21,7 @@ from src.ui.components import (
 )
 
 
-def render(view: PerformanceView, briefing: Briefing) -> None:
+def render(view: PerformanceView, briefing: Briefing, registry: Registry) -> None:
     """Render the Performance page."""
     st.markdown("# Performance")
     st.caption(
@@ -32,6 +35,8 @@ def render(view: PerformanceView, briefing: Briefing) -> None:
     _render_blended(view.blended)
     st.divider()
     _render_partners(view.partners)
+    st.divider()
+    _render_pnl_flow(view, registry)
     st.divider()
     _render_trailing_charts(view)
 
@@ -174,3 +179,90 @@ def _build_blended_series(view: PerformanceView) -> list[dict]:
             }
         )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# P&L flow Sankey — engine emits the typed structure, UI styles + renders.
+# ---------------------------------------------------------------------------
+
+_CATEGORY_COLORS: dict[str, str] = {
+    "revenue_source": "#8A9099",
+    "revenue_total": "#8A9099",
+    "payouts": "#FF6B6B",
+    "operating_costs": "#FF6B6B",
+    "operating_subcost": "#FF6B6B",
+    "gross_contribution": "#4FE3A1",
+}
+
+
+def _render_pnl_flow(view: PerformanceView, registry: Registry) -> None:
+    st.markdown("### P&L flow")
+    st.caption(
+        f"Blended book over the trailing {view.trailing_window_weeks} weeks. "
+        "Per-partner revenue → revenue total → payouts, operating costs "
+        "(processing + servicing), and gross contribution. Flows balance "
+        "by construction (see tests/unit/test_pnl_flow.py)."
+    )
+
+    flow = build_pnl_flow(view, registry)
+
+    labels = [_node_label(n.name, n.value) for n in flow.nodes]
+    node_colors = [_CATEGORY_COLORS[n.category] for n in flow.nodes]
+    node_customdata = [n.secondary_metric for n in flow.nodes]
+
+    link_colors = [
+        _with_alpha(_CATEGORY_COLORS[flow.nodes[link.target].category], 0.35)
+        for link in flow.links
+    ]
+
+    fig = go.Figure(
+        go.Sankey(
+            arrangement="snap",
+            node=dict(
+                label=labels,
+                color=node_colors,
+                pad=18,
+                thickness=18,
+                line=dict(color="rgba(255,255,255,0.15)", width=0.5),
+                customdata=node_customdata,
+                hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
+            ),
+            link=dict(
+                source=[link.source for link in flow.links],
+                target=[link.target for link in flow.links],
+                value=[link.value for link in flow.links],
+                color=link_colors,
+                hovertemplate=(
+                    "%{source.label} → %{target.label}: "
+                    "€%{value:,.0f}c<extra></extra>"
+                ),
+            ),
+        )
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=480,
+        margin=dict(l=10, r=10, t=10, b=10),
+        font=dict(size=12),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _node_label(name: str, value_cents: int) -> str:
+    """`<name> · €<value>` with thousands grouping; signed for losses."""
+    abs_eur = abs(value_cents) // 100
+    sign = "-" if value_cents < 0 else ""
+    return f"{name} · {sign}€{abs_eur:,}"
+
+
+def _with_alpha(hex_color: str, alpha: float) -> str:
+    """`#RRGGBB` → `rgba(r, g, b, alpha)` for Plotly link colours."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+# Silence "unused" warning for the re-exported PnlFlow type (helpful for IDEs).
+_ = PnlFlow
