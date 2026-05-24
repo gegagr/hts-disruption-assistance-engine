@@ -17,6 +17,7 @@ from src.ui.components import (
     format_bps,
     format_eur,
     format_pct,
+    format_week_commencing,
     mode_badge,
     status_pill,
 )
@@ -25,9 +26,11 @@ from src.ui.components import (
 def render(view: PerformanceView, briefing: Briefing, registry: Registry) -> None:
     """Render the Performance page."""
     floor_pct = view.margin_floor_bps / 100
+    start_date = registry.dataset.start_date.value
+    wc = format_week_commencing(view.as_of_week, start_date)
     st.markdown("# Performance")
     st.caption(
-        f"As of week {view.as_of_week} · trailing window: "
+        f"As of {wc} · trailing window: "
         f"{view.trailing_window_weeks} weeks · margin floor: "
         f"{floor_pct:.1f}%"
     )
@@ -40,12 +43,12 @@ def render(view: PerformanceView, briefing: Briefing, registry: Registry) -> Non
     st.divider()
     _render_pnl_flow(view, registry)
     st.divider()
-    _render_trailing_charts(view)
+    _render_trailing_charts(view, start_date)
 
 
 def _render_briefing(briefing: Briefing) -> None:
     st.markdown(
-        f"### Briefing {mode_badge(briefing.mode)}",
+        f"### Briefing {mode_badge(briefing.mode, briefing.provider)}",
         unsafe_allow_html=True,
     )
     lines = briefing.rendered_text.split("\n")
@@ -139,7 +142,7 @@ def _partner_metric_items(status: PartnerStatus) -> list[dict]:
     ]
 
 
-def _render_trailing_charts(view: PerformanceView) -> None:
+def _render_trailing_charts(view: PerformanceView, start_date) -> None:
     st.markdown("### Trailing window — blended book")
     series = _build_blended_series(view)
     if not series:
@@ -166,7 +169,9 @@ def _render_trailing_charts(view: PerformanceView) -> None:
             {"gross_margin_pct": [row["gross_margin_pct"] for row in series]},
             height=180,
         )
-    st.caption(f"x-axis: ISO weeks {weeks[0]}–{weeks[-1]}")
+    first = format_week_commencing(weeks[0], start_date)
+    last = format_week_commencing(weeks[-1], start_date)
+    st.caption(f"x-axis: week commencing {first} → {last}")
 
 
 def _build_blended_series(view: PerformanceView) -> list[dict]:

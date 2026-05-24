@@ -10,126 +10,161 @@ import streamlit as st
 
 from src.config.schema import Registry
 from src.engine.ab_test import ABComparison, ABTestView
-from src.ui.components import format_eur
+from src.ui.components import (
+    CURRENT_SCENARIO,
+    LOWER_SCENARIO,
+    dark_table_html,
+    format_date,
+    format_eur,
+    format_week_commencing,
+    scenario_name,
+    scenario_pill,
+)
 
 
 def render(view: ABTestView, registry: Registry) -> None:
     fee_control_pct = registry.fee_level.control_pct.value
     fee_test_pct = registry.fee_level.test_pct.value
-    current_label = f"Current fee ({_fmt_pct(fee_control_pct, fee_test_pct)} of fare)"
-    lower_label = f"Lower fee ({_fmt_pct(fee_test_pct, fee_control_pct)} of fare)"
+    current_pct = _fmt_pct(fee_control_pct, fee_test_pct)
+    lower_pct = _fmt_pct(fee_test_pct, fee_control_pct)
 
+    start_date = registry.dataset.start_date.value
+    wc = format_week_commencing(view.as_of_week, start_date)
+    launched = format_date(view.split_date)
     st.markdown("# A/B Test")
     st.caption(
-        f"As of week {view.as_of_week} · test launched on {view.split_date} · "
+        f"As of {wc} · test launched on {launched} · "
         f"mix-adjustment: {view.mix_control_method} · "
         f"baseline booking mix origin: {view.reference_mix_origin}"
     )
 
-    # Arm sizes (bookings since test launch)
     cols = st.columns(2)
     with cols[0]:
         st.metric(
-            f"{current_label} — bookings since test launch",
+            f"{CURRENT_SCENARIO} ({current_pct} of fare) — bookings since test launch",
             f"{view.arm_sizes['control']:,}",
         )
     with cols[1]:
         st.metric(
-            f"{lower_label} — bookings since test launch",
+            f"{LOWER_SCENARIO} ({lower_pct} of fare) — bookings since test launch",
             f"{view.arm_sizes['test']:,}",
         )
 
     st.divider()
-    _render_verdict(view, current_label=current_label, lower_label=lower_label)
+    _render_verdict(view)
     st.divider()
-    _render_metrics(view, current_label=current_label, lower_label=lower_label)
+    _render_metrics(view, current_pct=current_pct, lower_pct=lower_pct)
     st.divider()
-    _render_disagreements(
-        view, current_label=current_label, lower_label=lower_label
-    )
+    _render_disagreements(view)
     st.divider()
     _render_reference_mix(view)
 
 
-def _winner_label(
-    winner: str, *, current_label: str, lower_label: str
-) -> str:
-    """Map data-model arm name to the user-facing fee label."""
-    if winner == "control":
-        return current_label
-    if winner == "test":
-        return lower_label
-    return "tie"
-
-
-def _render_verdict(
-    view: ABTestView, *, current_label: str, lower_label: str
-) -> None:
+def _render_verdict(view: ABTestView) -> None:
     v = view.verdict
     st.markdown("### Verdict")
-    cols = st.columns(2)
-    with cols[0]:
-        st.markdown(
-            "**Winner on contribution per booking** _(adjusted for partner mix)_: "
-            f"`{_winner_label(v.winner_on_contribution_per_booking, current_label=current_label, lower_label=lower_label)}`"
-        )
-    with cols[1]:
-        st.markdown(
-            "**Winner on total contribution**: "
-            f"`{_winner_label(v.winner_on_total_contribution, current_label=current_label, lower_label=lower_label)}`"
-        )
+
+    cpb_pill = scenario_pill(v.winner_on_contribution_per_booking)
+    total_pill = scenario_pill(v.winner_on_total_contribution)
+    callout = (
+        "<div style='background:rgba(159,217,225,0.08); "
+        "border-left:3px solid #9DD8E2; padding:12px 16px; border-radius:6px;'>"
+        f"Adjusted for partner mix, contribution per booking favours {cpb_pill}. "
+        f"Total contribution favours {total_pill}."
+        "</div>"
+    )
+    st.markdown(callout, unsafe_allow_html=True)
+
     cols = st.columns(2)
     with cols[0]:
         st.metric(
-            f"Total contribution — {current_label}",
+            f"Total contribution — {CURRENT_SCENARIO}",
             format_eur(v.total_contribution_cents["control"]),
         )
     with cols[1]:
         st.metric(
-            f"Total contribution — {lower_label}",
+            f"Total contribution — {LOWER_SCENARIO}",
             format_eur(v.total_contribution_cents["test"]),
         )
-    st.info(v.tradeoff_summary)
+
+    # Compose a plain-language trade-off line from structured fields — never
+    # surface the engine's raw "control arm / test arm" sentence.
+    attach = next(
+        (m for m in view.metrics if m.metric == "attach_rate"), None
+    )
+    cpb_metric = next(
+        (m for m in view.metrics if m.metric == "contribution_per_booking_cents"),
+        None,
+    )
+    if attach is not None and cpb_metric is not None:
+        higher_attach = scenario_name(_higher_arm(attach))
+        higher_cpb = scenario_name(_higher_arm(cpb_metric))
+        ctl_total = format_eur(v.total_contribution_cents["control"])
+        tst_total = format_eur(v.total_contribution_cents["test"])
+        if higher_attach == higher_cpb:
+            st.info(
+                f"{higher_cpb} wins on both attach rate and contribution per "
+                "booking — no trade-off."
+            )
+        else:
+            st.info(
+                f"Volume vs margin: {higher_attach} wins on attach rate, "
+                f"{higher_cpb} wins on contribution per booking. "
+                f"Total contribution — {CURRENT_SCENARIO} {ctl_total} vs "
+                f"{LOWER_SCENARIO} {tst_total}."
+            )
 
 
-def _render_metrics(
-    view: ABTestView, *, current_label: str, lower_label: str
-) -> None:
+def _higher_arm(m: ABComparison) -> str:
+    return "test" if m.stratified["test"] > m.stratified["control"] else "control"
+
+
+def _render_metrics(view: ABTestView, *, current_pct: str, lower_pct: str) -> None:
     st.markdown("### Fee scenario comparison")
+    st.caption(
+        "Each cell shows the adjusted figure (mix-controlled) above, "
+        "and the unadjusted figure underneath."
+    )
+    columns = [
+        {"key": "metric", "label": "Metric", "align": "left", "width": "28%"},
+        {
+            "key": "control",
+            "label": CURRENT_SCENARIO,
+            "subtitle": f"{current_pct} of fare",
+            "align": "right",
+            "sub_key": "control_sub",
+            "width": "28%",
+        },
+        {
+            "key": "test",
+            "label": LOWER_SCENARIO,
+            "subtitle": f"{lower_pct} of fare",
+            "align": "right",
+            "sub_key": "test_sub",
+            "width": "28%",
+        },
+        {"key": "winner", "label": "Winner", "align": "left", "html": True,
+         "width": "16%"},
+    ]
     rows = [
-        _metric_row(m, current_label=current_label, lower_label=lower_label)
+        {
+            "metric": _metric_label(m.metric),
+            "control": _fmt(m.metric, m.stratified["control"]),
+            "control_sub": f"unadjusted: {_fmt(m.metric, m.naive['control'])}",
+            "test": _fmt(m.metric, m.stratified["test"]),
+            "test_sub": f"unadjusted: {_fmt(m.metric, m.naive['test'])}",
+            "winner": scenario_pill(m.winning_arm),
+        }
         for m in view.metrics
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
-
-
-def _metric_row(
-    m: ABComparison, *, current_label: str, lower_label: str
-) -> dict[str, str]:
-    return {
-        "Metric": _metric_label(m.metric),
-        f"Unadjusted — {current_label}": _fmt(m.metric, m.naive["control"]),
-        f"Unadjusted — {lower_label}": _fmt(m.metric, m.naive["test"]),
-        f"Adjusted for partner mix — {current_label}": _fmt(
-            m.metric, m.stratified["control"]
-        ),
-        f"Adjusted for partner mix — {lower_label}": _fmt(
-            m.metric, m.stratified["test"]
-        ),
-        "Δ adjusted (lower fee − current fee)": _fmt(
-            m.metric, m.delta_stratified, signed=True
-        ),
-        "Winner (adjusted)": _winner_label(
-            m.winning_arm, current_label=current_label, lower_label=lower_label
-        ),
-    }
+    st.markdown(dark_table_html(columns, rows), unsafe_allow_html=True)
 
 
 def _metric_label(metric: str) -> str:
     return {
         "attach_rate": "Attach rate",
         "loss_ratio": "Loss ratio",
-        "gross_margin_pct": "Gross margin %",
+        "gross_margin_pct": "Gross margin",
         "contribution_per_booking_cents": "Contribution per booking",
     }.get(metric, metric)
 
@@ -142,9 +177,7 @@ def _fmt(metric: str, value: float, *, signed: bool = False) -> str:
     return f"{pct:+.2f}%" if signed else f"{pct:.2f}%"
 
 
-def _render_disagreements(
-    view: ABTestView, *, current_label: str, lower_label: str
-) -> None:
+def _render_disagreements(view: ABTestView) -> None:
     st.markdown("### Partners where the finding differs from the blended book")
     if not view.verdict.partner_disagreements:
         st.success(
@@ -152,29 +185,36 @@ def _render_disagreements(
             "partner prefers the same fee as the book overall."
         )
         return
+    columns = [
+        {"key": "partner", "label": "Partner", "align": "left", "width": "24%"},
+        {"key": "blended", "label": "Blended verdict prefers", "align": "left",
+         "html": True, "width": "20%"},
+        {"key": "partner_pref", "label": "Partner prefers", "align": "left",
+         "html": True, "width": "18%"},
+        {
+            "key": "ctl_cpb",
+            "label": f"Contribution per booking — {CURRENT_SCENARIO}",
+            "align": "right",
+            "width": "19%",
+        },
+        {
+            "key": "tst_cpb",
+            "label": f"Contribution per booking — {LOWER_SCENARIO}",
+            "align": "right",
+            "width": "19%",
+        },
+    ]
     rows = [
         {
-            "Partner": d.display_name,
-            "Blended verdict prefers": _winner_label(
-                d.blended_winner,
-                current_label=current_label,
-                lower_label=lower_label,
-            ),
-            "Partner prefers": _winner_label(
-                d.partner_winner,
-                current_label=current_label,
-                lower_label=lower_label,
-            ),
-            f"Contribution per booking — {current_label}": format_eur(
-                round(d.partner_control_cpb_cents)
-            ),
-            f"Contribution per booking — {lower_label}": format_eur(
-                round(d.partner_test_cpb_cents)
-            ),
+            "partner": d.display_name,
+            "blended": scenario_pill(d.blended_winner),
+            "partner_pref": scenario_pill(d.partner_winner),
+            "ctl_cpb": format_eur(round(d.partner_control_cpb_cents)),
+            "tst_cpb": format_eur(round(d.partner_test_cpb_cents)),
         }
         for d in view.verdict.partner_disagreements
     ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.markdown(dark_table_html(columns, rows), unsafe_allow_html=True)
 
 
 def _render_reference_mix(view: ABTestView) -> None:
@@ -185,11 +225,15 @@ def _render_reference_mix(view: ABTestView) -> None:
             "The 'adjusted for partner mix' figures above re-weight each fee "
             "scenario to this baseline so the comparison is like-for-like."
         )
+        columns = [
+            {"key": "cell", "label": "Partner × route", "align": "left"},
+            {"key": "weight", "label": "Weight", "align": "right"},
+        ]
         rows = [
-            {"Partner × route": k, "Weight": f"{v * 100:.2f}%"}
+            {"cell": k, "weight": f"{v * 100:.2f}%"}
             for k, v in sorted(view.reference_mix.items())
         ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.markdown(dark_table_html(columns, rows), unsafe_allow_html=True)
 
 
 def _fmt_pct(pct: float, other: float) -> str:

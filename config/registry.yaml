@@ -177,3 +177,10 @@ briefing:
   llm_enabled:   { value: true, origin: assumed }
   llm_timeout_s: { value: 10.0, origin: assumed }
   llm_model:     { value: "claude-sonnet-4-6", origin: assumed }
+  # Briefing renderer selection. "template" → deterministic fallback (default;
+  # keeps CI and no-key runs reproducible). "anthropic" → Claude via the
+  # Anthropic SDK (reads ANTHROPIC_API_KEY). "openrouter" → OpenAI-compatible
+  # client pointed at OpenRouter (reads OPENROUTER_API_KEY). Failures of any
+  # provider fall back to the deterministic template per the existing contract.
+  provider:        { value: "template", origin: assumed }
+  openrouter_model: { value: "google/gemini-2.0-flash-001", origin: assumed }

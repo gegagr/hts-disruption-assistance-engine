@@ -119,11 +119,18 @@ class BriefingNarrative(BaseModel):
     floor_callouts: list[FloorCallout]
 
 
+LLMProvider = Literal["anthropic", "openrouter"]
+
+
 class Briefing(BaseModel):
     """Final briefing carrying evidence + narrative + the rendered text."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     mode: BriefingMode
+    # When mode == "llm", which provider rendered it. None in template mode.
+    # Used by the mode-badge in every surface so a reader always knows the
+    # source (Claude vs Gemini 2.0 Flash vs deterministic template).
+    provider: LLMProvider | None = None
     evidence: BriefingEvidencePack
     narrative: BriefingNarrative
     rendered_text: str           # the text the UI / export displays
@@ -362,17 +369,39 @@ def pack_event_label(pack: BriefingEvidencePack, event_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# LLM renderer (T029)
+# LLM renderer — dispatched by registry.briefing.provider
 # ---------------------------------------------------------------------------
 
 def render_llm(
     pack: BriefingEvidencePack, registry: Registry
 ) -> BriefingNarrative:
-    """Call Anthropic Claude and parse the response into a BriefingNarrative.
+    """Render the briefing via the configured LLM provider.
 
-    Raises any of: ImportError (SDK missing), RuntimeError (missing API key,
-    HTTP failure, timeout, JSON parse error, schema validation failure).
+    Dispatches to `_render_anthropic` or `_render_openrouter` based on
+    `registry.briefing.provider.value`. Both paths share the same frozen
+    system prompt and the same typed evidence pack — the swap changes
+    only the transport.
+
+    Raises ``RuntimeError`` on any failure (missing SDK, missing API key,
+    HTTP error, timeout, malformed JSON, schema validation). The
+    orchestrator catches and falls back to the deterministic template.
     """
+    provider = registry.briefing.provider.value
+    if provider == "anthropic":
+        return _render_anthropic(pack, registry)
+    if provider == "openrouter":
+        return _render_openrouter(pack, registry)
+    # `provider == "template"` shouldn't reach here — the orchestrator
+    # short-circuits before calling render_llm. Guard anyway.
+    raise RuntimeError(
+        f"render_llm called with provider={provider!r}; expected anthropic|openrouter"
+    )
+
+
+def _render_anthropic(
+    pack: BriefingEvidencePack, registry: Registry
+) -> BriefingNarrative:
+    """Anthropic Claude transport. Frozen system prompt + typed evidence pack."""
     try:
         from anthropic import Anthropic
     except ImportError as exc:
@@ -415,24 +444,78 @@ def render_llm(
             timeout=registry.briefing.llm_timeout_s.value,
         )
     except Exception as exc:
-        raise RuntimeError(f"LLM call failed: {exc}") from exc
+        raise RuntimeError(f"Anthropic call failed: {exc}") from exc
 
     text = "".join(
         getattr(block, "text", "")
         for block in message.content
         if getattr(block, "type", "") == "text"
     ).strip()
-    text = _strip_code_fence(text)
-    try:
-        parsed: dict[str, Any] = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"LLM output is not valid JSON: {exc}") from exc
+    return _parse_narrative(text, source="Anthropic")
 
+
+def _render_openrouter(
+    pack: BriefingEvidencePack, registry: Registry
+) -> BriefingNarrative:
+    """OpenRouter transport via the OpenAI-compatible SDK. Same system prompt,
+    same evidence pack, same output schema as the Anthropic path. Secrets read
+    at runtime from ``OPENROUTER_API_KEY``."""
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError("openai SDK not installed") from exc
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        timeout=registry.briefing.llm_timeout_s.value,
+    )
+    pack_json = json.dumps(pack.model_dump(mode="json"), sort_keys=True)
+    try:
+        response = client.chat.completions.create(
+            model=registry.briefing.openrouter_model.value,
+            max_tokens=2000,  # allow: literal — SDK token budget, not a model input
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        "EVIDENCE:\n"
+                        + pack_json
+                        + "\n\nProduce one BriefingNarrative JSON object."
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:
+        raise RuntimeError(f"OpenRouter call failed: {exc}") from exc
+
+    text = (response.choices[0].message.content or "").strip()
+    return _parse_narrative(text, source="OpenRouter")
+
+
+def _parse_narrative(text: str, *, source: str) -> BriefingNarrative:
+    """Strip code fences, parse JSON, validate as a BriefingNarrative.
+
+    Shared between every LLM transport — output schema is provider-agnostic.
+    """
+    cleaned = _strip_code_fence(text)
+    try:
+        parsed: dict[str, Any] = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{source} output is not valid JSON: {exc}") from exc
     parsed["mode"] = "llm"
     try:
         return BriefingNarrative.model_validate(parsed)
     except ValidationError as exc:
-        raise RuntimeError(f"LLM output failed schema validation: {exc}") from exc
+        raise RuntimeError(
+            f"{source} output failed BriefingNarrative schema validation: {exc}"
+        ) from exc
 
 
 def _strip_code_fence(s: str) -> str:
@@ -531,33 +614,58 @@ def compute_briefing(
     *,
     force_template: bool = False,
 ) -> Briefing:
-    """LLM-first with deterministic template fallback (FR-024a/b/c)."""
-    pack = build_evidence_pack(performance_view, registry)
+    """Provider-dispatched LLM render with deterministic template fallback.
 
-    if force_template or not registry.briefing.llm_enabled.value:
-        narrative = render_template(pack)
-        return Briefing(
-            mode="template",
-            evidence=pack,
-            narrative=narrative,
-            rendered_text=render(narrative, pack),
-        )
+    Provider precedence:
+      1. ``force_template=True`` argument → template (CI / no-network use).
+      2. ``registry.briefing.provider == "template"`` → template.
+      3. ``registry.briefing.llm_enabled == False`` → template (global kill
+         switch — preserved from spec 001 for back-compat).
+      4. Otherwise dispatch to the configured provider; any failure (missing
+         SDK, missing API key, HTTP error, timeout, malformed JSON, schema
+         validation, unknown evidence ref, digit-in-headline) falls back to
+         template with a single info-log line.
+
+    FR-024a..c (spec 001) extended to cover every provider: the contract is
+    "any LLM failure of any provider → deterministic template fallback".
+    """
+    pack = build_evidence_pack(performance_view, registry)
+    provider = registry.briefing.provider.value
+
+    if (
+        force_template
+        or provider == "template"
+        or not registry.briefing.llm_enabled.value
+    ):
+        return _template_briefing(pack)
 
     try:
         narrative = render_llm(pack, registry)
         rendered = render(narrative, pack)  # raises on unknown ref / digit headline
         return Briefing(
             mode="llm",
+            provider=provider,  # "anthropic" | "openrouter"
             evidence=pack,
             narrative=narrative,
             rendered_text=rendered,
         )
     except (RuntimeError, ValueError, KeyError) as exc:
-        log.info("Briefing LLM render failed (%s); falling back to template.", exc)
-        narrative = render_template(pack)
-        return Briefing(
-            mode="template",
-            evidence=pack,
-            narrative=narrative,
-            rendered_text=render(narrative, pack),
+        log.info(
+            "Briefing render via %s failed (%s); falling back to template.",
+            provider,
+            exc,
         )
+        return _template_briefing(pack)
+
+
+def _template_briefing(pack: BriefingEvidencePack) -> Briefing:
+    """Build the deterministic-fallback Briefing. Centralised so every
+    fallback path lands on the same construction."""
+    narrative = render_template(pack)
+    return Briefing(
+        mode="template",
+        provider=None,
+        evidence=pack,
+        narrative=narrative,
+        rendered_text=render(narrative, pack),
+    )

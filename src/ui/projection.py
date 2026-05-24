@@ -15,7 +15,12 @@ from src.engine.projection import (
     ProjectionView,
     roll_projection_to_months,
 )
-from src.ui.components import format_eur, origin_pill
+from src.ui.components import (
+    dark_table_html,
+    format_eur,
+    format_week_commencing,
+    origin_pill,
+)
 
 # Match the app theme's chart palette (see .streamlit/config.toml).
 _SCENARIO_COLORS: dict[str, str] = {
@@ -25,9 +30,11 @@ _SCENARIO_COLORS: dict[str, str] = {
 
 
 def render(view: ProjectionView, registry: Registry) -> None:
+    start_date = registry.dataset.start_date.value
+    wc = format_week_commencing(view.as_of_week, start_date)
     st.markdown("# Projection")
     st.caption(
-        f"As of week {view.as_of_week} · {view.weeks_forward}-week forward · "
+        f"As of {wc} · {view.weeks_forward}-week forward · "
         "deterministic"
     )
 
@@ -69,17 +76,24 @@ def _render_drivers(view: ProjectionView) -> None:
         "Every figure on this page derives from these values. Each driver "
         "carries its origin tag (Constitution Principle III)."
     )
+    columns = [
+        {"key": "driver", "label": "Driver", "align": "left", "width": "32%"},
+        {"key": "value", "label": "Value", "align": "right", "width": "18%"},
+        {"key": "origin", "label": "Origin", "align": "left", "width": "16%"},
+        {"key": "source", "label": "Source", "align": "left", "width": "16%"},
+        {"key": "formula", "label": "Formula", "align": "left", "width": "18%"},
+    ]
     rows = [_driver_row(d) for d in view.drivers]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.markdown(dark_table_html(columns, rows), unsafe_allow_html=True)
 
 
 def _driver_row(d: ProjectionDriver) -> dict[str, str]:
     return {
-        "Driver": _pretty_driver(d.name),
-        "Value": _fmt_driver_value(d.name, d.value),
-        "Origin": d.origin,
-        "Source": d.source or "—",
-        "Formula": d.formula,
+        "driver": _pretty_driver(d.name),
+        "value": _fmt_driver_value(d.name, d.value),
+        "origin": d.origin,
+        "source": d.source or "—",
+        "formula": d.formula,
     }
 
 
@@ -112,23 +126,42 @@ def _fmt_driver_value(name: str, value: float) -> str:
 
 def _render_weekly_tables(view: ProjectionView, registry: Registry) -> None:
     st.markdown("### Weekly schedule (per fee scenario)")
+    start_date = registry.dataset.start_date.value
+    weekly_columns = [
+        {"key": "week_offset", "label": "Week offset", "align": "right",
+         "width": "10%"},
+        {"key": "wc", "label": "Week commencing", "align": "left", "width": "14%"},
+        {"key": "volume", "label": "Volume", "align": "right", "width": "12%"},
+        {"key": "ancillaries", "label": "Ancillaries", "align": "right",
+         "width": "12%"},
+        {"key": "revenue", "label": "Revenue", "align": "right", "width": "13%"},
+        {"key": "payouts", "label": "Payouts", "align": "right", "width": "13%"},
+        {"key": "cos", "label": "Cost of service", "align": "right", "width": "13%"},
+        {"key": "contribution", "label": "Contribution", "align": "right",
+         "width": "13%"},
+    ]
     for scenario in view.scenarios:
         with st.expander(f"{_pretty(scenario, registry)} — 52 weeks"):
             weekly_rows = [
                 {
-                    "Week offset": w.week_offset,
-                    "ISO week": w.iso_week,
-                    "Volume": f"{w.volume:,}",
-                    "Ancillaries": f"{w.ancillaries:,}",
-                    "Revenue": format_eur(w.revenue_cents),
-                    "Payouts": format_eur(w.payouts_cents),
-                    "Cost of service": format_eur(w.cost_of_service_cents),
-                    "Contribution": format_eur(w.contribution_cents),
+                    "week_offset": w.week_offset,
+                    "wc": format_week_commencing(
+                        w.iso_week, start_date, prefix=""
+                    ),
+                    "volume": f"{w.volume:,}",
+                    "ancillaries": f"{w.ancillaries:,}",
+                    "revenue": format_eur(w.revenue_cents),
+                    "payouts": format_eur(w.payouts_cents),
+                    "cos": format_eur(w.cost_of_service_cents),
+                    "contribution": format_eur(w.contribution_cents),
                 }
                 for w in view.weekly
                 if w.scenario == scenario
             ]
-            st.dataframe(weekly_rows, use_container_width=True, hide_index=True)
+            st.markdown(
+                dark_table_html(weekly_columns, weekly_rows),
+                unsafe_allow_html=True,
+            )
 
 
 def _pretty(scenario: str, registry: Registry) -> str:
@@ -236,18 +269,26 @@ def _render_monthly_table(
     """Small per-month contribution table (not cumulative) so a reader can see
     which months drive the divergence."""
     display = _scenario_display(registry)
-    # Pivot: row per month, column per scenario.
     month_keys = sorted({m.month_iso for m in months})
     by_key: dict[tuple[str, str], int] = {
         (m.month_iso, m.scenario): m.contribution_cents for m in months
     }
+    columns = [
+        {"key": "month", "label": "Month", "align": "left", "width": "20%"},
+    ]
+    for scenario in view.scenarios:
+        columns.append(
+            {
+                "key": scenario,
+                "label": display.get(scenario, scenario),
+                "align": "right",
+            }
+        )
     rows: list[dict[str, str]] = []
     for month in month_keys:
-        row: dict[str, str] = {"Month": month}
+        row: dict[str, str] = {"month": month}
         for scenario in view.scenarios:
-            label = display.get(scenario, scenario)
-            value = by_key.get((month, scenario), 0)
-            row[label] = format_eur(value)
+            row[scenario] = format_eur(by_key.get((month, scenario), 0))
         rows.append(row)
     with st.expander("Per-month contribution (not cumulative)"):
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.markdown(dark_table_html(columns, rows), unsafe_allow_html=True)

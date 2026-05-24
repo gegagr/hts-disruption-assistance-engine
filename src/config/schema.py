@@ -129,11 +129,21 @@ class ProjectionConfig(BaseModel):
     trend_factor: RegistryEntry[float]
 
 
+BriefingProvider = Literal["anthropic", "openrouter", "template"]
+
+
 class BriefingConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     llm_enabled: RegistryEntry[bool]
     llm_timeout_s: RegistryEntry[float]
     llm_model: RegistryEntry[str]
+    # Provider selection for the briefing renderer. "template" forces the
+    # deterministic fallback (default — keeps CI / no-key runs deterministic).
+    provider: RegistryEntry[BriefingProvider]
+    # Model name for the OpenRouter path (when provider == "openrouter").
+    # The anthropic path uses llm_model above; kept separate so neither
+    # provider's identifier silently leaks into the other.
+    openrouter_model: RegistryEntry[str]
 
 
 # ---------------------------------------------------------------------------

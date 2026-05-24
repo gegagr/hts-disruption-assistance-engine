@@ -28,6 +28,7 @@ from src.ui import ab_test as ab_test_page
 from src.ui import performance as performance_page
 from src.ui import projection as projection_page
 from src.ui import variance as variance_page
+from src.ui.components import APP_SUBTITLE, APP_TITLE, format_week_commencing
 
 REGISTRY_PATH = Path(__file__).resolve().parents[2] / "config" / "registry.yaml"
 BOOKINGS_PARQUET = (
@@ -37,7 +38,7 @@ BOOKINGS_PARQUET = (
 
 def main() -> None:
     st.set_page_config(
-        page_title="HTS Disruption Assistance Engine",
+        page_title=APP_TITLE,
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -67,14 +68,14 @@ def main() -> None:
         )
 
     # Sidebar
-    st.sidebar.title("HTS DA Engine")
-    st.sidebar.markdown(
-        "Internal finance tool — Disruption Assistance, SEE book."
-    )
+    st.sidebar.title(APP_TITLE)
+    st.sidebar.markdown(APP_SUBTITLE)
+    start_date = registry.dataset.start_date.value
     as_of_week = st.sidebar.selectbox(
-        "As-of week",
+        "As of week (commencing)",
         options=list(range(max_week + 1)),
         index=max_week,
+        format_func=lambda w: format_week_commencing(w, start_date),
         help="Anchor week for current-week metrics.",
     )
     llm_default = registry.briefing.llm_enabled.value and bool(
@@ -120,7 +121,7 @@ def main() -> None:
     with tab_perf:
         performance_page.render(pv, briefing, registry)
     with tab_var:
-        variance_page.render(vv)
+        variance_page.render(vv, registry)
     with tab_ab:
         ab_test_page.render(ab, registry)
     with tab_proj:

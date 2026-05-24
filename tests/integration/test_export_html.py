@@ -82,7 +82,12 @@ def test_mode_badge_present(soup) -> None:
     badge = briefing.find(class_="mode-badge")
     assert badge is not None
     text = badge.get_text(strip=True)
-    assert "LLM" in text or "template (fallback)" in text
+    assert (
+        "deterministic fallback" in text
+        or "Claude" in text
+        or "Gemini" in text
+        or "LLM" in text
+    )
 
 
 def test_origin_pills_on_at_least_some_figures(soup) -> None:

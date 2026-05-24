@@ -7,16 +7,20 @@ from __future__ import annotations
 
 import streamlit as st
 
+from src.config.schema import Registry
 from src.engine.aggregates import BLENDED_PARTNER
 from src.engine.variance import VarianceRow, VarianceView
-from src.ui.components import format_eur
+from src.ui.components import dark_table_html, format_eur, format_week_commencing
+
+BLENDED_DISPLAY = "Blended (all partners)"
 
 
-def render(view: VarianceView) -> None:
+def render(view: VarianceView, registry: Registry) -> None:
     st.markdown("# Variance")
     threshold_pct = view.material_gap_bps / 100
+    wc = format_week_commencing(view.as_of_week, registry.dataset.start_date.value)
     st.caption(
-        f"As of week {view.as_of_week} · trailing window: "
+        f"As of {wc} · trailing window: "
         f"{view.trailing_window_weeks} weeks · "
         f"flag threshold for materially different from blended: "
         f"{threshold_pct:.1f} percentage points"
@@ -42,12 +46,38 @@ def render(view: VarianceView) -> None:
     _render_drilldowns(view)
 
 
+_COLUMNS = [
+    {"key": "partner", "label": "Partner", "align": "left", "html": True, "width": "22%"},
+    {"key": "priced", "label": "Priced cancel rate", "align": "right", "width": "13%"},
+    {"key": "realised", "label": "Realised cancel rate", "align": "right", "width": "13%"},
+    {"key": "gap", "label": "Gap (pp)", "align": "right", "width": "10%"},
+    {"key": "impact", "label": "Margin impact", "align": "right", "width": "14%"},
+    {"key": "sold", "label": "Ancillaries sold", "align": "right", "width": "14%"},
+    {"key": "hidden", "label": "Hidden in blended view", "align": "left",
+     "width": "14%"},
+]
+
+
 def _render_partner_table(view: VarianceView) -> None:
-    rows = [_row_dict(r) for r in view.rows]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    rows = [_partner_row(r) for r in view.rows]
+    st.markdown(dark_table_html(_COLUMNS, rows), unsafe_allow_html=True)
 
 
 def _render_drilldowns(view: VarianceView) -> None:
+    drill_columns = [
+        {"key": "partner", "label": "Route", "align": "left", "width": "22%"},
+        {"key": "priced", "label": "Priced cancel rate", "align": "right",
+         "width": "13%"},
+        {"key": "realised", "label": "Realised cancel rate", "align": "right",
+         "width": "13%"},
+        {"key": "gap", "label": "Gap (pp)", "align": "right", "width": "10%"},
+        {"key": "impact", "label": "Margin impact", "align": "right",
+         "width": "14%"},
+        {"key": "sold", "label": "Ancillaries sold", "align": "right",
+         "width": "14%"},
+        {"key": "hidden", "label": "Hidden in blended view", "align": "left",
+         "width": "14%"},
+    ]
     for partner_id, rows in view.drilldown.items():
         display = next(
             (r.display_name for r in view.rows if r.partner_id == partner_id),
@@ -57,28 +87,43 @@ def _render_drilldowns(view: VarianceView) -> None:
             if not rows:
                 st.info("No rows in the trailing window.")
                 continue
-            table_rows = [_row_dict(r) for r in rows]
-            st.dataframe(table_rows, use_container_width=True, hide_index=True)
+            table_rows = [_route_row(r) for r in rows]
+            st.markdown(
+                dark_table_html(drill_columns, table_rows),
+                unsafe_allow_html=True,
+            )
 
 
-def _row_dict(r: VarianceRow) -> dict[str, str]:
-    label = r.display_name
+def _partner_row(r: VarianceRow) -> dict[str, str]:
     if r.partner_id == BLENDED_PARTNER:
-        label = f"**{label}**"
+        partner = f"<strong>{BLENDED_DISPLAY}</strong>"
+    else:
+        partner = r.display_name
+    return _shared_cells(r, partner)
+
+
+def _route_row(r: VarianceRow) -> dict[str, str]:
+    # Inside the partner expander, show route only so labels stay
+    # consistent across every partner drilldown.
+    label = (r.route_type or "All routes").capitalize()
+    return _shared_cells(r, label)
+
+
+def _shared_cells(r: VarianceRow, partner_html: str) -> dict[str, str]:
     priced_pct = r.priced_cancel_rate_bps / 100
     realised = (
         "—"
         if r.realised_cancel_rate_bps is None
         else f"{r.realised_cancel_rate_bps / 100:.2f}%"
     )
-    gap = "—" if r.gap_bps is None else f"{r.gap_bps / 100:+.2f} pp"
-    masked = "masked by the blended average" if r.hidden_by_blend else ""
+    gap = "—" if r.gap_bps is None else f"{r.gap_bps / 100:+.2f}"
+    hidden = "yes" if r.hidden_by_blend else ""
     return {
-        "Partner": label,
-        "Priced cancel rate": f"{priced_pct:.2f}%",
-        "Realised cancel rate": realised,
-        "Gap (pp = percentage points)": gap,
-        "Margin impact": format_eur(r.margin_impact_cents),
-        "Ancillaries sold": f"{r.ancillaries_sold:,}",
-        "Visibility": masked,
+        "partner": partner_html,
+        "priced": f"{priced_pct:.2f}%",
+        "realised": realised,
+        "gap": gap,
+        "impact": format_eur(r.margin_impact_cents),
+        "sold": f"{r.ancillaries_sold:,}",
+        "hidden": hidden,
     }

@@ -25,6 +25,12 @@ from src.engine.consistency import ConsistencyReport
 from src.engine.performance import PerformanceView
 from src.engine.projection import ProjectionView
 from src.engine.variance import VarianceView
+from src.ui.components import (
+    APP_SUBTITLE,
+    APP_TITLE,
+    format_date,
+    format_week_commencing,
+)
 
 ORIGIN_FILL = {
     "disclosed": PatternFill("solid", fgColor="CCE5FF"),
@@ -52,13 +58,14 @@ def write_workbook(
     wb = Workbook()
     wb.remove(wb.active)  # drop default sheet
 
+    start_date = registry.dataset.start_date.value
     name_index = _write_assumptions(wb, registry)
     _write_readme(wb, name_index)
     _write_weekly_aggregates(wb, registry, bookings_df)
-    _write_performance(wb, performance)
-    _write_variance(wb, variance)
-    _write_ab_test(wb, ab_test, registry)
-    _write_projection(wb, projection)
+    _write_performance(wb, performance, start_date)
+    _write_variance(wb, variance, start_date)
+    _write_ab_test(wb, ab_test, registry, start_date)
+    _write_projection(wb, projection, start_date)
     _write_briefing(wb, briefing)
     _write_consistency(wb, consistency)
     _write_audit(wb, performance)
@@ -219,8 +226,10 @@ def _write_assumptions(wb: Workbook, registry: Registry) -> dict[str, str]:
 
 def _write_readme(wb: Workbook, name_index: dict[str, str]) -> None:
     ws = wb.create_sheet("README")
-    ws["A1"] = "HTS Disruption Assistance — Performance Engine Export"
+    ws["A1"] = APP_TITLE
     ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = APP_SUBTITLE
+    ws["A2"].font = Font(italic=True, color="555555")
     ws["A3"] = (
         "Every figure in this workbook traces back to a value on the "
         "Assumptions sheet via a named range. Edit any yellow (assumed) or "
@@ -301,9 +310,12 @@ def _write_weekly_aggregates(wb: Workbook, registry: Registry, bookings_df) -> N
         ws.column_dimensions[chr(64 + i)].width = 18
 
 
-def _write_performance(wb: Workbook, performance: PerformanceView) -> None:
+def _write_performance(
+    wb: Workbook, performance: PerformanceView, start_date
+) -> None:
     ws = wb.create_sheet("Performance")
-    ws["A1"] = f"Performance — as of week {performance.as_of_week}"
+    wc = format_week_commencing(performance.as_of_week, start_date)
+    ws["A1"] = f"Performance — as of {wc}"
     ws["A1"].font = Font(bold=True, size=12)
     ws["A2"] = (
         f"Trailing window: {performance.trailing_window_weeks} weeks. "
@@ -372,9 +384,12 @@ def _write_performance(wb: Workbook, performance: PerformanceView) -> None:
         ws.column_dimensions[chr(64 + i)].width = 22
 
 
-def _write_variance(wb: Workbook, variance: VarianceView) -> None:
+def _write_variance(
+    wb: Workbook, variance: VarianceView, start_date
+) -> None:
     ws = wb.create_sheet("Variance")
-    ws["A1"] = f"Variance — as of week {variance.as_of_week}"
+    wc = format_week_commencing(variance.as_of_week, start_date)
+    ws["A1"] = f"Variance — as of {wc}"
     ws["A1"].font = Font(bold=True, size=12)
     ws["A2"] = (
         f"Trailing window: {variance.trailing_window_weeks} weeks. "
@@ -384,7 +399,7 @@ def _write_variance(wb: Workbook, variance: VarianceView) -> None:
     headers = [
         "Partner", "Route", "Priced (bps)", "Realised (bps)",
         "Gap (bps)", "Ancillaries sold", "Ancillaries cancelled",
-        "Avg fare (cents)", "Margin impact (cents)", "Hidden by blend?",
+        "Avg fare (cents)", "Margin impact (cents)", "Hidden in blended view",
     ]
     for col, h in enumerate(headers, start=1):
         c = ws.cell(row=4, column=col, value=h)
@@ -393,7 +408,9 @@ def _write_variance(wb: Workbook, variance: VarianceView) -> None:
 
     row = 5
     for r in variance.rows:
-        ws.cell(row=row, column=1, value=r.display_name)
+        ws.cell(row=row, column=1, value=_variance_partner_label(r))
+        if r.partner_id == "_blended_":
+            ws.cell(row=row, column=1).font = Font(bold=True)
         ws.cell(row=row, column=2, value=r.route_type or "ALL")
         # Priced bps references the registry-named cell when partner-level
         if r.partner_id not in ("_blended_",) and r.route_type is None:
@@ -428,7 +445,10 @@ def _write_variance(wb: Workbook, variance: VarianceView) -> None:
     row += 1
     for partner_id, drill_rows in variance.drilldown.items():
         for r in drill_rows:
-            ws.cell(row=row, column=1, value=r.display_name)
+            # Strip " — route" suffix so partner column shows partner only;
+            # route already sits in column 2.
+            partner_only = r.display_name.split(" — ", 1)[0]
+            ws.cell(row=row, column=1, value=partner_only)
             ws.cell(row=row, column=2, value=r.route_type or "ALL")
             ws.cell(
                 row=row,
@@ -452,14 +472,18 @@ def _write_variance(wb: Workbook, variance: VarianceView) -> None:
         ws.column_dimensions[chr(64 + i)].width = 22
 
 
-def _write_ab_test(wb: Workbook, ab: ABTestView, registry: Registry) -> None:
+def _write_ab_test(
+    wb: Workbook, ab: ABTestView, registry: Registry, start_date
+) -> None:
     ctl_pct = registry.fee_level.control_pct.value
     tst_pct = registry.fee_level.test_pct.value
     ctl_label = f"Current fee ({_fmt_pct(ctl_pct, tst_pct)} of fare)"
     tst_label = f"Lower fee ({_fmt_pct(tst_pct, ctl_pct)} of fare)"
 
     ws = wb.create_sheet("ABTest")
-    ws["A1"] = f"A/B Test — as of week {ab.as_of_week} · test launched {ab.split_date}"
+    wc = format_week_commencing(ab.as_of_week, start_date)
+    launched = format_date(ab.split_date)
+    ws["A1"] = f"A/B Test — as of {wc} · test launched {launched}"
     ws["A1"].font = Font(bold=True, size=12)
     ws["A2"] = f"Mix-adjustment: {ab.mix_control_method}"
 
@@ -476,7 +500,7 @@ def _write_ab_test(wb: Workbook, ab: ABTestView, registry: Registry) -> None:
         f"Unadjusted — {tst_label}",
         f"Adjusted for partner mix — {ctl_label}",
         f"Adjusted for partner mix — {tst_label}",
-        "Δ adjusted (lower fee − current fee)",
+        "Δ adjusted (Lower fee − Current fee)",
         "Winner",
     ]
     for col, h in enumerate(headers, start=1):
@@ -485,23 +509,31 @@ def _write_ab_test(wb: Workbook, ab: ABTestView, registry: Registry) -> None:
         c.fill = HEADER_FILL
     row = 9
     for m in ab.metrics:
-        ws.cell(row=row, column=1, value=m.metric)
+        ws.cell(row=row, column=1, value=_metric_label(m.metric))
         ws.cell(row=row, column=2, value=m.naive["control"])
         ws.cell(row=row, column=3, value=m.naive["test"])
         ws.cell(row=row, column=4, value=m.stratified["control"])
         ws.cell(row=row, column=5, value=m.stratified["test"])
         ws.cell(row=row, column=6, value=f"=E{row}-D{row}")
-        ws.cell(row=row, column=7, value=m.winning_arm)
+        ws.cell(row=row, column=7, value=_scenario_name(m.winning_arm))
         row += 1
 
     row += 1
     ws.cell(row=row, column=1, value="Verdict").font = Font(bold=True)
     row += 1
     ws.cell(row=row, column=1, value="Winner on contribution per booking")
-    ws.cell(row=row, column=2, value=ab.verdict.winner_on_contribution_per_booking)
+    ws.cell(
+        row=row,
+        column=2,
+        value=_scenario_name(ab.verdict.winner_on_contribution_per_booking),
+    )
     row += 1
     ws.cell(row=row, column=1, value="Winner on total contribution")
-    ws.cell(row=row, column=2, value=ab.verdict.winner_on_total_contribution)
+    ws.cell(
+        row=row,
+        column=2,
+        value=_scenario_name(ab.verdict.winner_on_total_contribution),
+    )
     row += 1
     ws.cell(row=row, column=1, value=f"Total contribution — {ctl_label} (cents)")
     ws.cell(row=row, column=2, value=ab.verdict.total_contribution_cents["control"])
@@ -509,9 +541,9 @@ def _write_ab_test(wb: Workbook, ab: ABTestView, registry: Registry) -> None:
     ws.cell(row=row, column=1, value=f"Total contribution — {tst_label} (cents)")
     ws.cell(row=row, column=2, value=ab.verdict.total_contribution_cents["test"])
     row += 2
-    ws.cell(row=row, column=1, value="Tradeoff").font = Font(bold=True)
+    ws.cell(row=row, column=1, value="Trade-off").font = Font(bold=True)
     row += 1
-    ws.cell(row=row, column=1, value=ab.verdict.tradeoff_summary).alignment = (
+    ws.cell(row=row, column=1, value=_compose_tradeoff_text(ab)).alignment = (
         Alignment(wrap_text=True)
     )
 
@@ -519,11 +551,13 @@ def _write_ab_test(wb: Workbook, ab: ABTestView, registry: Registry) -> None:
         ws.column_dimensions[chr(64 + i)].width = 30
 
 
-def _write_projection(wb: Workbook, projection: ProjectionView) -> None:
+def _write_projection(
+    wb: Workbook, projection: ProjectionView, start_date
+) -> None:
     ws = wb.create_sheet("Projection")
+    wc = format_week_commencing(projection.as_of_week, start_date)
     ws["A1"] = (
-        f"Projection — {projection.weeks_forward}-week forward from "
-        f"week {projection.as_of_week}"
+        f"Projection — {projection.weeks_forward}-week forward from {wc}"
     )
     ws["A1"].font = Font(bold=True, size=12)
 
@@ -549,7 +583,7 @@ def _write_projection(wb: Workbook, projection: ProjectionView) -> None:
     ws.cell(row=row, column=1, value="Weekly schedule").font = Font(bold=True)
     row += 1
     week_headers = [
-        "Scenario", "Week offset", "ISO week", "Volume", "Ancillaries",
+        "Scenario", "Week offset", "Week commencing", "Volume", "Ancillaries",
         "Revenue (cents)", "Payouts (cents)", "Cost of service (cents)",
         "Contribution (cents)",
     ]
@@ -558,10 +592,17 @@ def _write_projection(wb: Workbook, projection: ProjectionView) -> None:
         c.font = HEADER_FONT
         c.fill = HEADER_FILL
     row += 1
+    scenario_display = {
+        "standardise_on_control": "Standardise on Current fee",
+        "standardise_on_test": "Standardise on Lower fee",
+    }
     for w in projection.weekly:
-        ws.cell(row=row, column=1, value=w.scenario)
+        ws.cell(row=row, column=1, value=scenario_display.get(w.scenario, w.scenario))
         ws.cell(row=row, column=2, value=w.week_offset)
-        ws.cell(row=row, column=3, value=w.iso_week)
+        ws.cell(
+            row=row, column=3,
+            value=format_week_commencing(w.iso_week, start_date, prefix=""),
+        )
         ws.cell(row=row, column=4, value=w.volume)
         ws.cell(row=row, column=5, value=w.ancillaries)
         ws.cell(row=row, column=6, value=w.revenue_cents)
@@ -575,7 +616,10 @@ def _write_projection(wb: Workbook, projection: ProjectionView) -> None:
     ws.cell(row=row, column=1, value="Totals (52w)").font = Font(bold=True)
     row += 1
     for scenario, t in projection.totals.items():
-        ws.cell(row=row, column=1, value=scenario)
+        ws.cell(
+            row=row, column=1,
+            value=scenario_display.get(scenario, scenario),
+        )
         ws.cell(row=row, column=4, value=t.volume)
         ws.cell(row=row, column=5, value=t.ancillaries)
         ws.cell(row=row, column=6, value=t.revenue_cents)
@@ -588,11 +632,20 @@ def _write_projection(wb: Workbook, projection: ProjectionView) -> None:
         ws.column_dimensions[chr(64 + col)].width = 22
 
 
+_BRIEFING_PROVIDER_DISPLAY: dict[str, str] = {
+    "anthropic": "Claude",
+    "openrouter": "Gemini 2.0 Flash",
+}
+
+
 def _write_briefing(wb: Workbook, briefing: Briefing) -> None:
     ws = wb.create_sheet("Briefing")
     ws["A1"] = "Briefing"
     ws["A1"].font = Font(bold=True, size=12)
-    badge = "LLM" if briefing.mode == "llm" else "template (fallback)"
+    if briefing.mode == "llm":
+        badge = _BRIEFING_PROVIDER_DISPLAY.get(briefing.provider or "", "LLM")
+    else:
+        badge = "deterministic fallback"
     ws["A2"] = f"Mode: {badge}"
     ws["A2"].font = Font(bold=True)
     fill = (
@@ -737,6 +790,64 @@ def _fmt_pct(pct: float, other: float) -> str:
     if round(pct * 100) == round(other * 100):
         return f"{pct * 100:.1f}%"
     return f"{pct * 100:.0f}%"
+
+
+_METRIC_LABELS = {
+    "attach_rate": "Attach rate",
+    "loss_ratio": "Loss ratio",
+    "gross_margin_pct": "Gross margin",
+    "contribution_per_booking_cents": "Contribution per booking",
+}
+
+
+def _metric_label(metric: str) -> str:
+    return _METRIC_LABELS.get(metric, metric)
+
+
+def _scenario_name(arm: str) -> str:
+    return {"control": "Current fee", "test": "Lower fee", "tie": "Tie"}.get(
+        arm, arm
+    )
+
+
+def _compose_tradeoff_text(ab: ABTestView) -> str:
+    """Plain-language trade-off composed from structured fields — never the
+    engine's raw 'control arm / test arm' sentence."""
+    attach = next((m for m in ab.metrics if m.metric == "attach_rate"), None)
+    cpb = next(
+        (m for m in ab.metrics if m.metric == "contribution_per_booking_cents"),
+        None,
+    )
+    if attach is None or cpb is None:
+        return ""
+    higher_attach = (
+        "test" if attach.stratified["test"] > attach.stratified["control"]
+        else "control"
+    )
+    higher_cpb = (
+        "test" if cpb.stratified["test"] > cpb.stratified["control"]
+        else "control"
+    )
+    if higher_attach == higher_cpb:
+        return (
+            f"{_scenario_name(higher_cpb)} wins on both attach rate and "
+            "contribution per booking — no trade-off."
+        )
+    ctl_eur = ab.verdict.total_contribution_cents["control"] / 100
+    tst_eur = ab.verdict.total_contribution_cents["test"] / 100
+    return (
+        f"Volume vs margin: {_scenario_name(higher_attach)} wins on attach "
+        f"rate, {_scenario_name(higher_cpb)} wins on contribution per booking. "
+        f"Total contribution — Current fee €{ctl_eur:,.0f} vs Lower fee "
+        f"€{tst_eur:,.0f}."
+    )
+
+
+def _variance_partner_label(row) -> str:
+    """Plain-language label for variance partner column — blended row renamed."""
+    if row.partner_id == "_blended_":
+        return "Blended (all partners)"
+    return row.display_name
 
 
 # Silence unused import (used at type-check time only by callers)

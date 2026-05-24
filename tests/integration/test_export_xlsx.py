@@ -114,7 +114,11 @@ def test_briefing_sheet_carries_mode_badge(workbook_path: Path) -> None:
     ws = wb["Briefing"]
     badge_text = str(ws["A2"].value or "")
     assert "Mode:" in badge_text
-    assert "template (fallback)" in badge_text or "LLM" in badge_text
+    assert (
+        "deterministic fallback" in badge_text
+        or "Claude" in badge_text
+        or "Gemini" in badge_text
+    )
 
 
 def test_consistency_sheet_lists_checks(workbook_path: Path) -> None:

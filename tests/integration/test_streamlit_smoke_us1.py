@@ -33,4 +33,8 @@ def test_app_boots_and_renders_performance_tab(ensure_dataset, monkeypatch) -> N
     assert "Briefing" in body_text
     assert "Performance" in body_text
     # The template fallback badge should be visible
-    assert "template (fallback)" in body_text or "LLM" in body_text
+    assert (
+        "deterministic fallback" in body_text
+        or "Claude" in body_text
+        or "Gemini" in body_text
+    )

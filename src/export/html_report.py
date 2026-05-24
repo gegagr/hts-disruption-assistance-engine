@@ -6,9 +6,12 @@ SVG charts. No external resources — verified by integration test.
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 from pathlib import Path
+from typing import Any
 
 from jinja2 import BaseLoader, Environment, select_autoescape
+from markupsafe import Markup
 
 from src.config.schema import Registry
 from src.engine.ab_test import ABTestView
@@ -17,6 +20,12 @@ from src.engine.consistency import ConsistencyReport
 from src.engine.performance import PerformanceView
 from src.engine.projection import ProjectionView
 from src.engine.variance import VarianceView
+from src.ui.components import (
+    APP_SUBTITLE,
+    APP_TITLE,
+    format_date,
+    format_week_commencing,
+)
 
 ORIGIN_COLOURS = {
     "disclosed": "#cce5ff",
@@ -37,7 +46,7 @@ TEMPLATE = """\
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>HTS DA Performance — week {{ as_of_week }}</title>
+<title>{{ app_title }} — {{ as_of_wc }}</title>
 <style>
 * { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -49,27 +58,49 @@ h3 { font-size: 1.0em; margin-top: 16px; }
 .banner { padding: 12px; border-radius: 6px; margin: 12px 0; }
 .banner.fail { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
 .banner.pass { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-.mode-badge { font-size: 0.8em; padding: 2px 8px; border-radius: 8px;
-              vertical-align: middle; margin-left: 8px; font-weight: 600; }
-.mode-llm { background: #d1ecf1; }
-.mode-template { background: #fff3cd; }
+/* Readable badges on both light AND dark backgrounds: dark text on a coloured chip. */
+.mode-badge { font-size: 0.85em; padding: 2px 10px; border-radius: 8px;
+              vertical-align: middle; margin-left: 8px; font-weight: 600;
+              white-space: nowrap; }
+.mode-llm { background: #9DD8E2; color: #0B2A30; }
+.mode-template { background: #F2C56B; color: #3A2A0A; }
 .origin { font-size: 0.7em; padding: 1px 5px; border-radius: 6px;
-          vertical-align: super; margin-left: 4px; }
-table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.9em; }
-th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-th { background: #f0f0f0; font-weight: 600; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
+          vertical-align: super; margin-left: 4px; color: #222; }
+/* One coherent table treatment everywhere — dark header, light body. */
+table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.92em; }
+th { background: #131519; color: #ECEDEE; font-weight: 600;
+     padding: 10px 12px; text-align: left; border-bottom: 1px solid #2A2E33; }
+th.num { text-align: right; }
+th .subtitle { display: block; font-weight: 400; color: #9BA1A8;
+               font-size: 0.85em; margin-top: 2px; }
+td { padding: 8px 12px; border-bottom: 1px solid rgba(0,0,0,0.08);
+     vertical-align: top; }
+td.num { text-align: right;
+         font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+         font-variant-numeric: tabular-nums; }
+td .subline { color: #888; font-size: 0.8em; margin-top: 2px; }
+td .primary { font-weight: 600; }
 .figure { display: inline-block; }
 .bullet { margin: 4px 0 4px 16px; }
 .note { color: #555; font-size: 0.85em; font-style: italic; }
 .scenarios { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .section { margin-bottom: 32px; }
+.ab-table { table-layout: fixed; }
+/* One coherent pill treatment — mint-tinted, readable. */
+.scenario-pill { background: #103E2E; color: #7FE3B2; padding: 2px 10px;
+                 border-radius: 10px; font-weight: 600; white-space: nowrap;
+                 display: inline-block; }
+.scenario-pill.lower { background: #3A2410; color: #F5C896; }
+.scenario-pill.tie { background: #2A2A2A; color: #C7CCD3; }
+.verdict { background: #F4F6F8; border-left: 4px solid #9DD8E2; padding: 12px 16px;
+           margin: 8px 0; border-radius: 4px; }
 </style>
 </head>
 <body>
 
-<h1>HTS Disruption Assistance — Performance Report</h1>
-<p class="meta">As of ISO week {{ as_of_week }} · generated {{ generated_at }}</p>
+<h1>{{ app_title }}</h1>
+<p class="meta">{{ app_subtitle }}</p>
+<p class="meta">As of {{ as_of_wc }} · generated {{ generated_at }}</p>
 
 {% if not consistency.passed %}
 <div class="banner fail">
@@ -84,9 +115,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 <section class="section" id="briefing">
   <h2>Briefing
-    <span class="mode-badge mode-{{ briefing.mode }}">
-      {{ briefing.mode if briefing.mode == "llm" else "template (fallback)" }}
-    </span>
+    <span class="mode-badge mode-{{ briefing.mode }}">{{ briefing_badge }}</span>
   </h2>
   {% for line in briefing_lines %}
     <p>{{ line }}</p>
@@ -143,12 +172,12 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
       <th class="num">Realised (bps)<span class="origin" style="background:{{ origin_colour('measured-from-data') }}">{{ origin_letter('measured-from-data') }}</span></th>
       <th class="num">Gap (bps)</th>
       <th class="num">Margin impact</th>
-      <th>Hidden by blend?</th>
+      <th>Hidden in blended view</th>
     </tr></thead>
     <tbody>
     {% for r in variance.rows %}
     <tr>
-      <td>{{ r.display_name }}</td>
+      <td>{{ variance_partner_label(r) }}</td>
       <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.priced">{{ r.priced_cancel_rate_bps|int }}</span></td>
       <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.realised">{{ r.realised_cancel_rate_bps|int if r.realised_cancel_rate_bps is not none else "—" }}</span></td>
       <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.gap">{{ r.gap_bps|int if r.gap_bps is not none else "—" }}</span></td>
@@ -161,40 +190,45 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 </section>
 
 <section class="section" id="ab-test">
-  <h2>A/B Test — {{ current_label }} vs {{ lower_label }}</h2>
+  <h2>A/B Test — Current fee vs Lower fee</h2>
   <p class="note">
-    Arm sizes (bookings since test launch): {{ current_label }} {{ "{:,}".format(ab.arm_sizes['control']) }} ·
-    {{ lower_label }} {{ "{:,}".format(ab.arm_sizes['test']) }} ·
+    Test launched on {{ ab_launched }} ·
+    bookings since launch: Current fee {{ "{:,}".format(ab.arm_sizes['control']) }} ·
+    Lower fee {{ "{:,}".format(ab.arm_sizes['test']) }} ·
     mix-adjustment: {{ ab.mix_control_method }}<span class="origin" style="background:{{ origin_colour(ab.reference_mix_origin) }}">{{ origin_letter(ab.reference_mix_origin) }}</span>
   </p>
-  <table>
+  <table class="ab-table">
     <thead><tr>
       <th>Metric</th>
-      <th class="num">Unadjusted — {{ current_label }}</th>
-      <th class="num">Unadjusted — {{ lower_label }}</th>
-      <th class="num">Adjusted for partner mix — {{ current_label }}</th>
-      <th class="num">Adjusted for partner mix — {{ lower_label }}</th>
+      <th class="num">Current fee<span class="subtitle">{{ current_pct }} of fare</span></th>
+      <th class="num">Lower fee<span class="subtitle">{{ lower_pct }} of fare</span></th>
       <th>Winner</th>
     </tr></thead>
     <tbody>
     {% for m in ab.metrics %}
     <tr>
-      <td>{{ m.metric }}</td>
-      <td class="num"><span class="figure" data-figure-id="ab.{{ m.metric }}.naive.control">{{ fmt_metric(m.metric, m.naive['control']) }}</span></td>
-      <td class="num"><span class="figure" data-figure-id="ab.{{ m.metric }}.naive.test">{{ fmt_metric(m.metric, m.naive['test']) }}</span></td>
-      <td class="num"><span class="figure" data-figure-id="ab.{{ m.metric }}.strat.control">{{ fmt_metric(m.metric, m.stratified['control']) }}</span></td>
-      <td class="num"><span class="figure" data-figure-id="ab.{{ m.metric }}.strat.test">{{ fmt_metric(m.metric, m.stratified['test']) }}</span></td>
-      <td>{{ m.winning_arm }}</td>
+      <td>{{ metric_label(m.metric) }}</td>
+      <td class="num">
+        <div class="primary"><span class="figure" data-figure-id="ab.{{ m.metric }}.strat.control">{{ fmt_metric(m.metric, m.stratified['control']) }}</span></div>
+        <div class="subline">unadjusted: <span class="figure" data-figure-id="ab.{{ m.metric }}.naive.control">{{ fmt_metric(m.metric, m.naive['control']) }}</span></div>
+      </td>
+      <td class="num">
+        <div class="primary"><span class="figure" data-figure-id="ab.{{ m.metric }}.strat.test">{{ fmt_metric(m.metric, m.stratified['test']) }}</span></div>
+        <div class="subline">unadjusted: <span class="figure" data-figure-id="ab.{{ m.metric }}.naive.test">{{ fmt_metric(m.metric, m.naive['test']) }}</span></div>
+      </td>
+      <td>{{ scenario_pill(m.winning_arm) }}</td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
   <h3>Verdict</h3>
-  <p><strong>Winner on contribution per booking</strong>: {{ ab.verdict.winner_on_contribution_per_booking }} ·
-     <strong>winner on total contribution</strong>: {{ ab.verdict.winner_on_total_contribution }}</p>
-  <p>Total contribution — {{ current_label }}: <span class="figure" data-figure-id="ab.total.control">{{ fmt_eur(ab.verdict.total_contribution_cents['control']) }}</span>
-     · {{ lower_label }}: <span class="figure" data-figure-id="ab.total.test">{{ fmt_eur(ab.verdict.total_contribution_cents['test']) }}</span></p>
-  <p class="note">{{ ab.verdict.tradeoff_summary }}</p>
+  <div class="verdict">
+    <p>Adjusted for partner mix, contribution per booking favours {{ scenario_pill(ab.verdict.winner_on_contribution_per_booking) }}.
+       Total contribution favours {{ scenario_pill(ab.verdict.winner_on_total_contribution) }}.</p>
+    <p>Total contribution — Current fee: <span class="figure" data-figure-id="ab.total.control">{{ fmt_eur(ab.verdict.total_contribution_cents['control']) }}</span>
+       · Lower fee: <span class="figure" data-figure-id="ab.total.test">{{ fmt_eur(ab.verdict.total_contribution_cents['test']) }}</span></p>
+    <p class="note">{{ compose_tradeoff(ab) }}</p>
+  </div>
 </section>
 
 <section class="section" id="projection">
@@ -216,11 +250,11 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   </div>
   <h3>Drivers</h3>
   <table>
-    <thead><tr><th>Driver</th><th>Value</th><th>Origin</th><th>Formula</th></tr></thead>
+    <thead><tr><th>Driver</th><th class="num">Value</th><th>Origin</th><th>Formula</th></tr></thead>
     <tbody>
     {% for d in projection.drivers %}
     <tr>
-      <td>{{ d.name }}</td>
+      <td>{{ driver_label(d.name) }}</td>
       <td class="num">{{ fmt_driver(d.name, d.value) }}<span class="origin" style="background:{{ origin_colour(d.origin) }}">{{ origin_letter(d.origin) }}</span></td>
       <td>{{ d.origin }}</td>
       <td>{{ d.formula }}</td>
@@ -288,6 +322,102 @@ def _fmt_arm_pct(pct: float, other: float) -> str:
     return f"{pct * 100:.0f}%"
 
 
+_METRIC_LABELS = {
+    "attach_rate": "Attach rate",
+    "loss_ratio": "Loss ratio",
+    "gross_margin_pct": "Gross margin",
+    "contribution_per_booking_cents": "Contribution per booking",
+}
+
+
+def _metric_label(metric: str) -> str:
+    return _METRIC_LABELS.get(metric, metric)
+
+
+_SCENARIO_NAMES = {"control": "Current fee", "test": "Lower fee", "tie": "Tie"}
+
+
+def _scenario_name(winner: str) -> str:
+    return _SCENARIO_NAMES.get(winner, winner)
+
+
+def _scenario_pill(winner: str) -> Markup:
+    """Render a short non-wrapping pill for a winner arm name."""
+    name = _scenario_name(winner)
+    cls = {"control": "current", "test": "lower", "tie": "tie"}.get(winner, "")
+    classes = f"scenario-pill{(' ' + cls) if cls else ''}"
+    return Markup(f'<span class="{classes}">{name}</span>')
+
+
+def _variance_partner_label(row: Any) -> Markup:
+    """Bold the blended row and rename it to plain language. Per-partner rows
+    keep their display_name verbatim from the engine."""
+    from src.engine.aggregates import BLENDED_PARTNER
+
+    if row.partner_id == BLENDED_PARTNER:
+        return Markup("<strong>Blended (all partners)</strong>")
+    return Markup(escape(row.display_name))
+
+
+_DRIVER_LABELS = {
+    "blended_attach_rate": "Attach rate (blended)",
+    "blended_loss_ratio": "Loss ratio (blended)",
+    "blended_avg_fare_cents": "Average fare",
+    "blended_priced_cancel_rate": "Priced cancel rate (blended)",
+    "blended_realised_cancel_rate": "Realised cancel rate (blended)",
+    "weekly_volume": "Weekly volume",
+    "trend_factor": "Trend factor",
+    "coverage_pct": "Coverage %",
+    "payment_processing_pct": "Payment processing %",
+    "servicing_cost_per_unit_cents": "Servicing cost per ancillary",
+    "stratified_contribution_per_booking_control": (
+        "Contribution per booking — Current fee (mix-adjusted)"
+    ),
+    "stratified_contribution_per_booking_test": (
+        "Contribution per booking — Lower fee (mix-adjusted)"
+    ),
+}
+
+
+def _driver_label(name: str) -> str:
+    if name in _DRIVER_LABELS:
+        return _DRIVER_LABELS[name]
+    label = name.replace("_", " ")
+    label = label.replace("stratified", "(mix-adjusted)")
+    label = label.replace(" control", " — Current fee")
+    label = label.replace(" test", " — Lower fee")
+    return label[:1].upper() + label[1:]
+
+
+def _compose_tradeoff(ab: Any) -> str:
+    """Plain-language trade-off line composed from structured fields.
+
+    Never surfaces the engine's raw "control arm / test arm" sentence.
+    """
+    attach = next((m for m in ab.metrics if m.metric == "attach_rate"), None)
+    cpb = next(
+        (m for m in ab.metrics if m.metric == "contribution_per_booking_cents"),
+        None,
+    )
+    if attach is None or cpb is None:
+        return ""
+    higher_attach = "test" if attach.stratified["test"] > attach.stratified["control"] else "control"
+    higher_cpb = "test" if cpb.stratified["test"] > cpb.stratified["control"] else "control"
+    if higher_attach == higher_cpb:
+        return (
+            f"{_scenario_name(higher_cpb)} wins on both attach rate and "
+            "contribution per booking — no trade-off."
+        )
+    ctl_eur = ab.verdict.total_contribution_cents["control"] / 100
+    tst_eur = ab.verdict.total_contribution_cents["test"] / 100
+    return (
+        f"Volume vs margin: {_scenario_name(higher_attach)} wins on attach rate, "
+        f"{_scenario_name(higher_cpb)} wins on contribution per booking. "
+        f"Total contribution — Current fee €{ctl_eur:,.0f} vs Lower fee "
+        f"€{tst_eur:,.0f}."
+    )
+
+
 def write_report(
     *,
     performance: PerformanceView,
@@ -301,14 +431,22 @@ def write_report(
 ) -> Path:
     ctl_pct = registry.fee_level.control_pct.value
     tst_pct = registry.fee_level.test_pct.value
-    current_label = f"Current fee ({_fmt_arm_pct(ctl_pct, tst_pct)} of fare)"
-    lower_label = f"Lower fee ({_fmt_arm_pct(tst_pct, ctl_pct)} of fare)"
+    current_pct = _fmt_arm_pct(ctl_pct, tst_pct)
+    lower_pct = _fmt_arm_pct(tst_pct, ctl_pct)
+    # Projection section still uses the old long labels for scenario titles
+    current_label = f"Current fee ({current_pct} of fare)"
+    lower_label = f"Lower fee ({lower_pct} of fare)"
 
     env = Environment(loader=BaseLoader(), autoescape=select_autoescape())
     env.globals["fmt_eur"] = _fmt_eur
     env.globals["fmt_pct"] = _fmt_pct
     env.globals["fmt_metric"] = _fmt_metric
     env.globals["fmt_driver"] = _fmt_driver
+    env.globals["metric_label"] = _metric_label
+    env.globals["scenario_pill"] = _scenario_pill
+    env.globals["variance_partner_label"] = _variance_partner_label
+    env.globals["driver_label"] = _driver_label
+    env.globals["compose_tradeoff"] = _compose_tradeoff
     env.globals["pretty_scenario"] = lambda s: _pretty_scenario(
         s, current_label, lower_label
     )
@@ -318,22 +456,38 @@ def write_report(
     env.globals["origin_letters"] = ORIGIN_LETTERS
 
     briefing_lines = briefing.rendered_text.split("\n")
+    briefing_badge = _briefing_badge_text(briefing.mode, briefing.provider)
 
+    start_date = registry.dataset.start_date.value
     html = env.from_string(TEMPLATE).render(
-        as_of_week=performance.as_of_week,
+        app_title=APP_TITLE,
+        app_subtitle=APP_SUBTITLE,
+        as_of_wc=format_week_commencing(performance.as_of_week, start_date),
+        ab_launched=format_date(ab_test.split_date),
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         consistency=consistency,
         briefing=briefing,
         briefing_lines=briefing_lines,
+        briefing_badge=briefing_badge,
         performance=performance,
         variance=variance,
         ab=ab_test,
         projection=projection,
-        current_label=current_label,
-        lower_label=lower_label,
+        current_pct=current_pct,
+        lower_pct=lower_pct,
     )
 
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
     return out
+
+
+def _briefing_badge_text(mode: str, provider: str | None) -> str:
+    """Mirrors src/ui/components.mode_badge — names the LLM provider in
+    LLM mode so a reader knows the source."""
+    if mode == "llm":
+        return {"anthropic": "Claude", "openrouter": "Gemini 2.0 Flash"}.get(
+            provider or "", "LLM"
+        )
+    return "deterministic fallback"

@@ -22,6 +22,7 @@ dependencies = [
     "weasyprint>=62",
     "matplotlib>=3.8",
     "anthropic>=0.40",
+    "openai>=1.30",
     "plotly>=5.20",
 ]
 

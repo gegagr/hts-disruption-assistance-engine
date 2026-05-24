@@ -31,7 +31,7 @@ def test_cli_xlsx_html_no_llm(populated_dataset, tmp_path) -> None:
     assert len(html_files) == 1
     # Mode badge present in HTML (template fallback)
     text = html_files[0].read_text(encoding="utf-8")
-    assert "template (fallback)" in text
+    assert "deterministic fallback" in text
 
 
 def test_cli_no_format_flag_returns_error(populated_dataset, tmp_path) -> None:
