@@ -99,7 +99,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     args.out.mkdir(parents=True, exist_ok=True)
-    label = f"DA_Engine_w{as_of_week:03d}"
+    from datetime import timedelta
+
+    start_date = registry.dataset.start_date.value
+    week_monday = start_date + timedelta(days=as_of_week * 7)
+    label = f"DA_Report_w{as_of_week:03d}_{week_monday.isoformat()}"
 
     if args.xlsx:
         path = args.out / f"{label}.xlsx"

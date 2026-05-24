@@ -48,59 +48,133 @@ TEMPLATE = """\
 <meta charset="utf-8">
 <title>{{ app_title }} — {{ as_of_wc }}</title>
 <style>
-* { box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-       margin: 0; padding: 24px; color: #222; max-width: 1200px; margin-inline: auto; }
-h1 { font-size: 1.6em; margin-bottom: 4px; }
-h2 { font-size: 1.2em; margin-top: 32px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-h3 { font-size: 1.0em; margin-top: 16px; }
-.meta { color: #666; font-size: 0.9em; }
-.banner { padding: 12px; border-radius: 6px; margin: 12px 0; }
-.banner.fail { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-.banner.pass { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-/* Readable badges on both light AND dark backgrounds: dark text on a coloured chip. */
-.mode-badge { font-size: 0.85em; padding: 2px 10px; border-radius: 8px;
+/* --- Print / PDF setup (WeasyPrint) --------------------------------------
+ * A4 landscape (these financial tables are wide). Dark page canvas — the
+ * report has its own complete dark theme, independent of the Streamlit
+ * config. Browser-default running header/footer slots are suppressed so
+ * WeasyPrint never bakes a wall-clock timestamp or localhost URL into the
+ * PDF; we provide our own footer with the app name + data-as-of date. */
+@page {
+  size: A4 landscape;
+  margin: 14mm 12mm 14mm 12mm;
+  background: #0A0B0D;
+  @top-left { content: ""; }
+  @top-center { content: ""; }
+  @top-right { content: ""; }
+  @bottom-left { content: "{{ app_title|safe }}"; color: #9BA1A8;
+                 font-size: 8.5pt; }
+  @bottom-center { content: "As of {{ as_of_wc }}"; color: #9BA1A8;
+                   font-size: 8.5pt; }
+  @bottom-right { content: "Page " counter(page) " / " counter(pages);
+                  color: #9BA1A8; font-size: 8.5pt; }
+}
+html {
+  background: #0A0B0D;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+* {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  box-sizing: border-box;
+}
+body {
+  background: #0A0B0D;
+  color: #ECEDEE;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont,
+               "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 14px 18px;
+  max-width: 100%;
+}
+@media print { body { padding: 0; } }
+
+/* Type scale — serif headings, sans body, mono figures. Self-contained:
+ * no web fonts loaded by URL (passes the no-external-resources test). */
+h1, h2, h3 {
+  font-family: Georgia, "Times New Roman", "Iowan Old Style", serif;
+  color: #ECEDEE;
+  letter-spacing: -0.005em;
+}
+h1 { font-size: 1.55em; font-weight: 600; margin: 0 0 4px 0; }
+h2 { font-size: 1.15em; font-weight: 500; margin: 26px 0 8px 0;
+     border-bottom: 1px solid rgba(255,255,255,0.10); padding-bottom: 4px; }
+h3 { font-size: 1.0em; font-weight: 500; margin: 14px 0 6px 0;
+     page-break-after: avoid; break-after: avoid; }
+.meta { color: #9BA1A8; font-size: 0.85em; margin: 2px 0; }
+
+/* Banners — dark theme variants. */
+.banner { padding: 10px 14px; border-radius: 6px; margin: 10px 0;
+          font-size: 0.9em; }
+.banner.fail { background: #2A1418; color: #FFC4C8;
+               border: 1px solid #FF6B6B; }
+.banner.pass { background: #11261B; color: #B0E8C8;
+               border: 1px solid #4FE3A1; }
+
+/* Mode badge — dark-text on coloured chip, readable on dark canvas. */
+.mode-badge { font-size: 0.8em; padding: 2px 10px; border-radius: 8px;
               vertical-align: middle; margin-left: 8px; font-weight: 600;
               white-space: nowrap; }
 .mode-llm { background: #9DD8E2; color: #0B2A30; }
 .mode-template { background: #F2C56B; color: #3A2A0A; }
-.origin { font-size: 0.7em; padding: 1px 5px; border-radius: 6px;
-          vertical-align: super; margin-left: 4px; color: #222; }
-/* One coherent table treatment everywhere — dark header, light body. */
-table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.92em; }
+
+/* Origin chips — proper small pills, not bare floating letters. */
+.origin { display: inline-block; font-size: 0.7em; padding: 1px 6px;
+          border-radius: 999px; margin-left: 4px; color: #1A1C20;
+          font-weight: 700; vertical-align: baseline; line-height: 1.4;
+          border: 1px solid rgba(0,0,0,0.12); }
+
+/* Tables — one coherent dark treatment everywhere. */
+table { border-collapse: collapse; width: 100%; margin: 6px 0;
+        font-size: 0.82em; table-layout: fixed; }
 th { background: #131519; color: #ECEDEE; font-weight: 600;
-     padding: 10px 12px; text-align: left; border-bottom: 1px solid #2A2E33; }
+     padding: 8px 10px; text-align: left;
+     border-bottom: 1px solid rgba(255,255,255,0.14);
+     white-space: normal; word-break: normal; vertical-align: bottom; }
 th.num { text-align: right; }
 th .subtitle { display: block; font-weight: 400; color: #9BA1A8;
                font-size: 0.85em; margin-top: 2px; }
-td { padding: 8px 12px; border-bottom: 1px solid rgba(0,0,0,0.08);
-     vertical-align: top; }
+td { padding: 7px 10px; color: #ECEDEE;
+     border-bottom: 1px solid rgba(255,255,255,0.08);
+     vertical-align: top; word-wrap: break-word; }
 td.num { text-align: right;
-         font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+         font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
          font-variant-numeric: tabular-nums; }
-td .subline { color: #888; font-size: 0.8em; margin-top: 2px; }
-td .primary { font-weight: 600; }
+td .subline { color: #8A9099; font-size: 0.82em; margin-top: 2px; }
+td .primary { font-weight: 600; color: #ECEDEE; }
 .figure { display: inline-block; }
-.bullet { margin: 4px 0 4px 16px; }
-.note { color: #555; font-size: 0.85em; font-style: italic; }
-.scenarios { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-.section { margin-bottom: 32px; }
+.note { color: #9BA1A8; font-size: 0.85em; font-style: italic; }
+
+/* Page-break discipline — keep tables and h3+table pairs together,
+ * never let a row split, and let headers repeat on page breaks. */
+table, .scenarios > div, .verdict, .banner {
+  page-break-inside: avoid; break-inside: avoid;
+}
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+h2 { page-break-after: avoid; break-after: avoid; }
+
+.scenarios { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.section { margin-bottom: 22px; }
 .ab-table { table-layout: fixed; }
-/* One coherent pill treatment — mint-tinted, readable. */
+
+/* Scenario pills — same mint/sand treatment as the app. */
 .scenario-pill { background: #103E2E; color: #7FE3B2; padding: 2px 10px;
                  border-radius: 10px; font-weight: 600; white-space: nowrap;
                  display: inline-block; }
 .scenario-pill.lower { background: #3A2410; color: #F5C896; }
 .scenario-pill.tie { background: #2A2A2A; color: #C7CCD3; }
-.verdict { background: #F4F6F8; border-left: 4px solid #9DD8E2; padding: 12px 16px;
-           margin: 8px 0; border-radius: 4px; }
+
+.verdict { background: rgba(159,217,225,0.08);
+           border-left: 3px solid #9DD8E2; padding: 12px 16px;
+           margin: 8px 0; border-radius: 4px; color: #ECEDEE; }
 </style>
 </head>
 <body>
 
 <h1>{{ app_title }}</h1>
 <p class="meta">{{ app_subtitle }}</p>
-<p class="meta">As of {{ as_of_wc }} · generated {{ generated_at }}</p>
+<p class="meta">As of {{ as_of_wc }} · generated {{ generated_on }}</p>
 
 {% if not consistency.passed %}
 <div class="banner fail">
@@ -168,9 +242,9 @@ td .primary { font-weight: 600; }
   <table>
     <thead><tr>
       <th>Partner</th>
-      <th class="num">Priced (bps)<span class="origin" style="background:{{ origin_colour('disclosed') }}">{{ origin_letter('disclosed') }}</span></th>
-      <th class="num">Realised (bps)<span class="origin" style="background:{{ origin_colour('measured-from-data') }}">{{ origin_letter('measured-from-data') }}</span></th>
-      <th class="num">Gap (bps)</th>
+      <th class="num">Priced cancel rate<span class="origin" style="background:{{ origin_colour('disclosed') }}">{{ origin_letter('disclosed') }}</span></th>
+      <th class="num">Realised cancel rate<span class="origin" style="background:{{ origin_colour('measured-from-data') }}">{{ origin_letter('measured-from-data') }}</span></th>
+      <th class="num">Gap (pp)</th>
       <th class="num">Margin impact</th>
       <th>Hidden in blended view</th>
     </tr></thead>
@@ -178,9 +252,9 @@ td .primary { font-weight: 600; }
     {% for r in variance.rows %}
     <tr>
       <td>{{ variance_partner_label(r) }}</td>
-      <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.priced">{{ r.priced_cancel_rate_bps|int }}</span></td>
-      <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.realised">{{ r.realised_cancel_rate_bps|int if r.realised_cancel_rate_bps is not none else "—" }}</span></td>
-      <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.gap">{{ r.gap_bps|int if r.gap_bps is not none else "—" }}</span></td>
+      <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.priced">{{ "%.2f%%" | format(r.priced_cancel_rate_bps / 100) }}</span></td>
+      <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.realised">{{ "%.2f%%" | format(r.realised_cancel_rate_bps / 100) if r.realised_cancel_rate_bps is not none else "—" }}</span></td>
+      <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.gap">{{ "%+.2f" | format(r.gap_bps / 100) if r.gap_bps is not none else "—" }}</span></td>
       <td class="num"><span class="figure" data-figure-id="var.{{ r.partner_id }}.impact">{{ fmt_eur(r.margin_impact_cents) }}</span></td>
       <td>{{ "yes" if r.hidden_by_blend else "" }}</td>
     </tr>
@@ -464,7 +538,7 @@ def write_report(
         app_subtitle=APP_SUBTITLE,
         as_of_wc=format_week_commencing(performance.as_of_week, start_date),
         ab_launched=format_date(ab_test.split_date),
-        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        generated_on=datetime.now().strftime("%Y-%m-%d"),
         consistency=consistency,
         briefing=briefing,
         briefing_lines=briefing_lines,

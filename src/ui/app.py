@@ -97,7 +97,7 @@ def main() -> None:
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Export current view set**")
-    if st.sidebar.button("Build XLSX + HTML"):
+    if st.sidebar.button("Build XLSX + HTML + PDF"):
         _run_export(as_of_week=as_of_week, llm_enabled=llm_enabled)
     _render_download_links()
 
@@ -257,13 +257,14 @@ def _inject_polish_css() -> None:
 
 
 def _run_export(*, as_of_week: int, llm_enabled: bool) -> None:
-    """Trigger the export CLI programmatically."""
+    """Trigger the export CLI programmatically — XLSX + HTML + PDF."""
     from src.cli.export import main as cli_main
 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     argv = [
         "--xlsx",
         "--html",
+        "--pdf",
         "--as-of-week",
         str(as_of_week),
         "--out",
@@ -271,7 +272,12 @@ def _run_export(*, as_of_week: int, llm_enabled: bool) -> None:
     ]
     if not llm_enabled:
         argv.append("--no-llm")
-    rc = cli_main(argv)
+    try:
+        rc = cli_main(argv)
+    except RuntimeError as exc:
+        # WeasyPrint native deps missing — fail loudly with the clear message.
+        st.sidebar.error(str(exc))
+        return
     if rc == 0:
         st.sidebar.success(f"Exported to {EXPORT_DIR}")
     elif rc == 2:
@@ -286,6 +292,7 @@ def _render_download_links() -> None:
         return
     xlsx_files = sorted(EXPORT_DIR.glob("*.xlsx"), reverse=True)
     html_files = sorted(EXPORT_DIR.glob("*.html"), reverse=True)
+    pdf_files = sorted(EXPORT_DIR.glob("*.pdf"), reverse=True)
     if xlsx_files:
         latest = xlsx_files[0]
         st.sidebar.download_button(
@@ -301,6 +308,14 @@ def _render_download_links() -> None:
             data=latest.read_bytes(),
             file_name=latest.name,
             mime="text/html",
+        )
+    if pdf_files:
+        latest = pdf_files[0]
+        st.sidebar.download_button(
+            "Download latest PDF",
+            data=latest.read_bytes(),
+            file_name=latest.name,
+            mime="application/pdf",
         )
 
 

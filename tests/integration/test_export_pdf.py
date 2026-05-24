@@ -51,7 +51,7 @@ def html_and_pdf(tmp_path_factory):
     pdf_path = outdir / "DA_Engine_test.pdf"
     try:
         write_pdf(html_path, pdf_path)
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         # WeasyPrint native deps missing (cairo/pango/glib). See quickstart.md.
         pytest.skip(
             f"WeasyPrint native deps not installed (run brew install "
@@ -67,7 +67,7 @@ def test_pdf_file_exists_and_is_non_empty(html_and_pdf) -> None:
 
 
 def test_pdf_contains_mode_badge_text(html_and_pdf) -> None:
-    """Mode badge survives PDF rendering."""
+    """Mode badge survives PDF rendering — provider-aware label set."""
     import pdfplumber
 
     _, pdf_path = html_and_pdf
@@ -77,7 +77,11 @@ def test_pdf_contains_mode_badge_text(html_and_pdf) -> None:
             extracted = page.extract_text() or ""
             text_parts.append(extracted)
     text = "\n".join(text_parts)
-    assert "LLM" in text or "template" in text
+    assert (
+        "deterministic fallback" in text
+        or "Claude" in text
+        or "Gemini" in text
+    )
 
 
 def test_pdf_contains_section_headings(html_and_pdf) -> None:
