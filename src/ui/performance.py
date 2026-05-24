@@ -10,6 +10,7 @@ import streamlit as st
 
 from src.config.schema import Registry
 from src.engine.briefing import Briefing
+from src.engine.dataset import load_bookings
 from src.engine.performance import PartnerStatus, PerformanceView
 from src.engine.pnl_flow import PnlFlow, build_pnl_flow
 from src.ui.components import (
@@ -23,11 +24,12 @@ from src.ui.components import (
 
 def render(view: PerformanceView, briefing: Briefing, registry: Registry) -> None:
     """Render the Performance page."""
+    floor_pct = view.margin_floor_bps / 100
     st.markdown("# Performance")
     st.caption(
         f"As of week {view.as_of_week} · trailing window: "
         f"{view.trailing_window_weeks} weeks · margin floor: "
-        f"{view.margin_floor_bps} bps"
+        f"{floor_pct:.1f}%"
     )
 
     _render_briefing(briefing)
@@ -73,31 +75,31 @@ def _render_blended(blended: PartnerStatus) -> None:
 def _render_partners(partners: list[PartnerStatus]) -> None:
     st.markdown("### Per-partner status")
     for status in partners:
-        header_cols = st.columns([3, 1, 2])
-        with header_cols[0]:
-            st.markdown(f"#### {status.display_name}")
-        with header_cols[1]:
-            st.markdown(status_pill(status.status), unsafe_allow_html=True)
-        with header_cols[2]:
-            distance = status.margin_distance_from_floor_bps
-            label = "Margin distance from floor"
-            st.markdown(
-                f"<small>{label}</small><br>"
-                f"<strong>{format_bps(distance)}</strong>",
-                unsafe_allow_html=True,
-            )
-        cols = st.columns(6)
-        items = _partner_metric_items(status)
-        for col, item in zip(cols, items, strict=False):
-            with col:
-                col.markdown(f"**{item['label']}**")
-                col.markdown(
-                    f"<div style='font-size:1.0em;'>{item['value']}</div>",
+        with st.container(border=True):
+            header_cols = st.columns([3, 1, 2])
+            with header_cols[0]:
+                st.markdown(f"#### {status.display_name}")
+            with header_cols[1]:
+                st.markdown(status_pill(status.status), unsafe_allow_html=True)
+            with header_cols[2]:
+                distance = status.margin_distance_from_floor_bps
+                label = "Margin distance from floor"
+                st.markdown(
+                    f"<small>{label}</small><br>"
+                    f"<strong>{format_bps(distance)}</strong>",
                     unsafe_allow_html=True,
                 )
-                if item.get("delta") is not None:
-                    col.caption(f"WoW: {item['delta']}")
-        st.markdown("---")
+            cols = st.columns(6)
+            items = _partner_metric_items(status)
+            for col, item in zip(cols, items, strict=False):
+                with col:
+                    col.markdown(f"**{item['label']}**")
+                    col.markdown(
+                        f"<div style='font-size:1.0em;'>{item['value']}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    if item.get("delta") is not None:
+                        col.caption(f"WoW: {item['delta']}")
 
 
 def _partner_metric_items(status: PartnerStatus) -> list[dict]:
@@ -194,36 +196,71 @@ _CATEGORY_COLORS: dict[str, str] = {
     "gross_contribution": "#4FE3A1",
 }
 
+# Pinned column positions — every node lives in exactly one column so flows
+# go strictly left-to-right and never cross.
+_COLUMN_X: dict[str, float] = {
+    "revenue_source": 0.001,
+    "revenue_total": 0.33,
+    # column at x=0.66 contains the three Revenue children
+    "payouts": 0.66,
+    "operating_costs": 0.66,
+    "gross_contribution": 0.66,
+    # Operating cost detail — sit furthest right
+    "operating_subcost": 0.999,
+}
+
+# Right-side y order (top → bottom): Gross Contribution (profit), Customer
+# Payouts, Operating Costs. Profit on top so the green band hugs the top edge.
+_RIGHT_COLUMN_Y: dict[str, float] = {
+    "Gross Contribution": 0.10,
+    "Customer Payouts": 0.40,
+    "Operating Costs": 0.78,
+}
+
+# Far-right column — Servicing above Processing.
+_DETAIL_COLUMN_Y: dict[str, float] = {
+    "Servicing": 0.70,
+    "Processing": 0.92,
+}
+
 
 def _render_pnl_flow(view: PerformanceView, registry: Registry) -> None:
-    st.markdown("### P&L flow")
+    st.markdown("### P&L flow — full book")
     st.caption(
-        f"Blended book over the trailing {view.trailing_window_weeks} weeks. "
-        "Per-partner revenue → revenue total → payouts, operating costs "
-        "(processing + servicing), and gross contribution. Flows balance "
-        "by construction (see tests/unit/test_pnl_flow.py)."
+        "Blended book over the full booking history (distinct from the "
+        "as-of-week KPIs above, which use the trailing window). Per-partner "
+        "revenue → Revenue → {Customer Payouts, Operating Costs (Processing "
+        "+ Servicing), Gross Contribution}. Flows balance by construction "
+        "(see tests/unit/test_pnl_flow.py)."
     )
 
-    flow = build_pnl_flow(view, registry)
+    bookings = load_bookings()
+    flow = build_pnl_flow(view, registry, bookings, period="full_book")
 
     labels = [_node_label(n.name, n.value) for n in flow.nodes]
     node_colors = [_CATEGORY_COLORS[n.category] for n in flow.nodes]
     node_customdata = [n.secondary_metric for n in flow.nodes]
 
+    node_x, node_y = _pinned_positions(flow)
+
+    # Link bands take the target node's colour at 0.5 alpha — brighter than
+    # before so the green contribution band is unmistakable on dark bg.
     link_colors = [
-        _with_alpha(_CATEGORY_COLORS[flow.nodes[link.target].category], 0.35)
+        _with_alpha(_CATEGORY_COLORS[flow.nodes[link.target].category], 0.5)
         for link in flow.links
     ]
 
     fig = go.Figure(
         go.Sankey(
-            arrangement="snap",
+            arrangement="fixed",
             node=dict(
                 label=labels,
                 color=node_colors,
-                pad=18,
-                thickness=18,
-                line=dict(color="rgba(255,255,255,0.15)", width=0.5),
+                x=node_x,
+                y=node_y,
+                pad=22,
+                thickness=20,
+                line=dict(color="rgba(255,255,255,0.18)", width=0.5),
                 customdata=node_customdata,
                 hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
             ),
@@ -243,11 +280,37 @@ def _render_pnl_flow(view: PerformanceView, registry: Registry) -> None:
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=480,
+        height=520,
         margin=dict(l=10, r=10, t=10, b=10),
-        font=dict(size=12),
+        font=dict(size=13, color="#ECEDEE"),
     )
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _pinned_positions(flow: PnlFlow) -> tuple[list[float], list[float]]:
+    """Compute (x, y) lists for every node in *flow.nodes* order."""
+    sources = [
+        i for i, n in enumerate(flow.nodes) if n.category == "revenue_source"
+    ]
+    n_sources = max(1, len(sources))
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for i, node in enumerate(flow.nodes):
+        xs.append(_COLUMN_X[node.category])
+        if node.category == "revenue_source":
+            # Evenly space partner sources top-to-bottom.
+            rank = sources.index(i)
+            ys.append(0.10 + (0.80 * rank / max(1, n_sources - 1)))
+        elif node.category == "revenue_total":
+            ys.append(0.50)
+        elif node.category in ("payouts", "operating_costs", "gross_contribution"):
+            ys.append(_RIGHT_COLUMN_Y.get(node.name, 0.50))
+        elif node.category == "operating_subcost":
+            ys.append(_DETAIL_COLUMN_Y.get(node.name, 0.85))
+        else:
+            ys.append(0.50)
+    return xs, ys
 
 
 def _node_label(name: str, value_cents: int) -> str:

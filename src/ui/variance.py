@@ -1,6 +1,7 @@
 """Variance Streamlit page (FR-012..014).
 
 Reads :class:`VarianceView` verbatim. NO computation here (Principle IV).
+Display strings use plain language; engine fields keep their names.
 """
 from __future__ import annotations
 
@@ -8,24 +9,30 @@ import streamlit as st
 
 from src.engine.aggregates import BLENDED_PARTNER
 from src.engine.variance import VarianceRow, VarianceView
-from src.ui.components import format_bps, format_eur
+from src.ui.components import format_eur
 
 
 def render(view: VarianceView) -> None:
     st.markdown("# Variance")
+    threshold_pct = view.material_gap_bps / 100
     st.caption(
         f"As of week {view.as_of_week} · trailing window: "
-        f"{view.trailing_window_weeks} weeks · material gap threshold: "
-        f"{view.material_gap_bps} bps"
+        f"{view.trailing_window_weeks} weeks · "
+        f"flag threshold for materially different from blended: "
+        f"{threshold_pct:.1f} percentage points"
     )
 
     if view.blended_realised_cancel_rate_bps is not None:
+        realised_pct = view.blended_realised_cancel_rate_bps / 100
+        priced_pct = view.blended_priced_cancel_rate_bps / 100
+        gap_pct = (
+            view.blended_realised_cancel_rate_bps
+            - view.blended_priced_cancel_rate_bps
+        ) / 100
         st.markdown(
-            f"**Blended realised cancel rate**: "
-            f"{view.blended_realised_cancel_rate_bps:,} bps · "
-            f"**blended priced** (volume-weighted): "
-            f"{view.blended_priced_cancel_rate_bps:,} bps · "
-            f"**gap**: {format_bps(view.blended_realised_cancel_rate_bps - view.blended_priced_cancel_rate_bps)}"
+            f"**Blended realised cancel rate**: {realised_pct:.2f}% · "
+            f"**blended priced rate** (volume-weighted): {priced_pct:.2f}% · "
+            f"**gap**: {gap_pct:+.2f} pp"
         )
 
     st.markdown("### Per-partner priced vs realised")
@@ -36,24 +43,8 @@ def render(view: VarianceView) -> None:
 
 
 def _render_partner_table(view: VarianceView) -> None:
-    rows = [
-        _row_dict(r, blended_bps=view.blended_realised_cancel_rate_bps)
-        for r in view.rows
-    ]
-    st.dataframe(
-        rows,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Partner": st.column_config.TextColumn(width="medium"),
-            "Priced (bps)": st.column_config.TextColumn(),
-            "Realised (bps)": st.column_config.TextColumn(),
-            "Gap (bps)": st.column_config.TextColumn(),
-            "Margin impact": st.column_config.TextColumn(),
-            "Ancillaries sold": st.column_config.TextColumn(),
-            "Hidden by blend?": st.column_config.TextColumn(),
-        },
-    )
+    rows = [_row_dict(r) for r in view.rows]
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def _render_drilldowns(view: VarianceView) -> None:
@@ -66,26 +57,28 @@ def _render_drilldowns(view: VarianceView) -> None:
             if not rows:
                 st.info("No rows in the trailing window.")
                 continue
-            table_rows = [
-                _row_dict(r, blended_bps=view.blended_realised_cancel_rate_bps)
-                for r in rows
-            ]
+            table_rows = [_row_dict(r) for r in rows]
             st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
 
-def _row_dict(r: VarianceRow, *, blended_bps: int | None) -> dict[str, str]:
+def _row_dict(r: VarianceRow) -> dict[str, str]:
     label = r.display_name
     if r.partner_id == BLENDED_PARTNER:
         label = f"**{label}**"
-    realised = "—" if r.realised_cancel_rate_bps is None else f"{r.realised_cancel_rate_bps:,}"
-    gap = "—" if r.gap_bps is None else format_bps(r.gap_bps)
-    hidden = "yes" if r.hidden_by_blend else ""
+    priced_pct = r.priced_cancel_rate_bps / 100
+    realised = (
+        "—"
+        if r.realised_cancel_rate_bps is None
+        else f"{r.realised_cancel_rate_bps / 100:.2f}%"
+    )
+    gap = "—" if r.gap_bps is None else f"{r.gap_bps / 100:+.2f} pp"
+    masked = "masked by the blended average" if r.hidden_by_blend else ""
     return {
         "Partner": label,
-        "Priced (bps)": f"{r.priced_cancel_rate_bps:,}",
-        "Realised (bps)": realised,
-        "Gap (bps)": gap,
+        "Priced cancel rate": f"{priced_pct:.2f}%",
+        "Realised cancel rate": realised,
+        "Gap (pp = percentage points)": gap,
         "Margin impact": format_eur(r.margin_impact_cents),
         "Ancillaries sold": f"{r.ancillaries_sold:,}",
-        "Hidden by blend?": hidden,
+        "Visibility": masked,
     }

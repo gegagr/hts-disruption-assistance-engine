@@ -1,0 +1,21 @@
+[theme]
+base = "dark"
+backgroundColor = "#0A0B0D"
+secondaryBackgroundColor = "#131519"
+textColor = "#ECEDEE"
+primaryColor = "#4FE3A1"
+font        = "'Hanken Grotesk':https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap, serif"
+codeFont    = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap, monospace"
+
+# Categorical series for Plotly so the Sankey + line charts match the app.
+chartCategoricalColors = [
+    "#4FE3A1",  # primary (gross contribution / profitable)
+    "#FF6B6B",  # cost / loss
+    "#8A9099",  # neutral / revenue
+    "#6CA0DC",  # secondary accent
+    "#E2B14F",  # warning
+]
+chartSequentialColors = [
+    "#0F1A22", "#1F3445", "#2F4F68", "#406B8B", "#5188AF", "#62A4D2", "#7AB7DE", "#92C9EA",
+]

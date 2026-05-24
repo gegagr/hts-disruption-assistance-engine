@@ -24,12 +24,21 @@ REGISTRY_PATH = Path(__file__).resolve().parents[2] / "config" / "registry.yaml"
 
 
 @pytest.fixture(scope="module")
-def flow_and_view():
+def fixture_set():
+    """Build PerformanceView + bookings + flows for both periods, once."""
     registry = load_registry(REGISTRY_PATH)
     df = generate_dataset(registry, write_parquet=False)
     pv = compute_performance(registry, df)
-    flow = build_pnl_flow(pv, registry)
-    return pv, flow
+    full_book = build_pnl_flow(pv, registry, df, period="full_book")
+    trailing = build_pnl_flow(pv, registry, df, period="trailing")
+    return pv, df, full_book, trailing
+
+
+@pytest.fixture(scope="module")
+def flow_and_view(fixture_set):
+    """Back-compat alias — defaults to full_book, which is the rendered view."""
+    pv, _, full_book, _ = fixture_set
+    return pv, full_book
 
 
 def _node_value(flow: PnlFlow, name: str) -> int:
@@ -82,16 +91,46 @@ def test_processing_plus_servicing_equals_operating_costs(flow_and_view) -> None
 # Reconciliation with the PerformanceView the tab renders
 # ---------------------------------------------------------------------------
 
-def test_flow_reconciles_with_performance_view_totals(flow_and_view) -> None:
-    pv, flow = flow_and_view
+def test_trailing_flow_reconciles_with_performance_view_totals(
+    fixture_set,
+) -> None:
+    pv, _, _, trailing = fixture_set
     bt = pv.blended.trailing
-    assert _node_value(flow, REVENUE_NODE) == sum(r.revenue_cents for r in bt)
-    assert _node_value(flow, PAYOUTS_NODE) == sum(r.payouts_cents for r in bt)
-    assert _node_value(flow, OPCOSTS_NODE) == sum(
+    assert _node_value(trailing, REVENUE_NODE) == sum(r.revenue_cents for r in bt)
+    assert _node_value(trailing, PAYOUTS_NODE) == sum(r.payouts_cents for r in bt)
+    assert _node_value(trailing, OPCOSTS_NODE) == sum(
         r.cost_of_service_cents for r in bt
     )
-    assert _node_value(flow, CONTRIBUTION_NODE) == sum(
+    assert _node_value(trailing, CONTRIBUTION_NODE) == sum(
         r.gross_margin_cents for r in bt
+    )
+
+
+def test_full_book_flow_aggregates_more_than_trailing(fixture_set) -> None:
+    """Sanity: full-book revenue ≥ trailing revenue (the trailing window is a
+    subset). On the seeded 26-week dataset with a 13-week trailing window
+    these MUST differ; the inequality therefore must be strict."""
+    _, _, full_book, trailing = fixture_set
+    assert _node_value(full_book, REVENUE_NODE) > _node_value(trailing, REVENUE_NODE)
+    assert _node_value(full_book, OPCOSTS_NODE) > _node_value(trailing, OPCOSTS_NODE)
+
+
+def test_full_book_balance_identities_hold(fixture_set) -> None:
+    """The required balance identities hold for the full-book period too."""
+    _, _, full_book, _ = fixture_set
+    source_nodes = [n for n in full_book.nodes if n.category == "revenue_source"]
+    revenue = _node_value(full_book, REVENUE_NODE)
+    assert sum(n.value for n in source_nodes) == revenue
+    assert (
+        _node_value(full_book, PAYOUTS_NODE)
+        + _node_value(full_book, OPCOSTS_NODE)
+        + _node_value(full_book, CONTRIBUTION_NODE)
+        == revenue
+    )
+    assert (
+        _node_value(full_book, PROCESSING_NODE)
+        + _node_value(full_book, SERVICING_NODE)
+        == _node_value(full_book, OPCOSTS_NODE)
     )
 
 

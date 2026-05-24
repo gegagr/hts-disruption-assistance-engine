@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from typing import Literal
 
+import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
 from src.config.schema import Registry
+from src.engine.aggregates import BLENDED_PARTNER, WeeklyAggregate, weekly_aggregate
 from src.engine.performance import PerformanceView
+
+Period = Literal["trailing", "full_book"]
 
 NodeCategory = Literal[
     "revenue_source",
@@ -59,29 +63,52 @@ CONTRIBUTION_NODE = "Gross Contribution"
 def build_pnl_flow(
     performance: PerformanceView,
     registry: Registry,
+    bookings_df: pd.DataFrame,
+    *,
+    period: Period = "full_book",
 ) -> PnlFlow:
     """Assemble the typed Sankey structure for the blended book.
 
-    All values come from totals over the same trailing window the
-    Performance KPIs use, so the Sankey reconciles exactly with the
-    tiles above it.
+    When ``period == "trailing"``, totals come from
+    ``performance.blended.trailing`` (so the picture reconciles with the
+    Performance tiles above). When ``period == "full_book"`` (default),
+    totals come from the full booking history aggregated via the existing
+    engine primitive ``weekly_aggregate`` — no new financial logic.
 
     The processing/servicing split is derived from registry values
     (``payment_processing_pct`` and ``servicing_cost_per_unit_cents``)
-    applied to already-computed engine outputs — no new financial logic.
+    applied to already-computed engine outputs.
     """
     pp_pct = registry.payment_processing_pct.value
     servicing_per_unit = registry.servicing_cost_per_unit_cents.value
 
     # ---------------------------------------------------------------------
-    # Blended totals over the trailing window — sums of engine outputs.
+    # Aggregate rows for the requested period (sums of engine outputs).
     # ---------------------------------------------------------------------
-    blended_trailing = performance.blended.trailing
-    blended_revenue = sum(r.revenue_cents for r in blended_trailing)
-    blended_payouts = sum(r.payouts_cents for r in blended_trailing)
-    blended_cos = sum(r.cost_of_service_cents for r in blended_trailing)
+    if period == "trailing":
+        blended_rows = performance.blended.trailing
+        partner_rows_lookup: dict[str, list[WeeklyAggregate]] = {
+            s.partner_id: s.trailing for s in performance.partners
+        }
+    else:  # full_book
+        all_rows = weekly_aggregate(
+            bookings_df,
+            registry,
+            by_partner=True,
+            include_blended=True,
+        )
+        blended_rows = [r for r in all_rows if r.partner_id == BLENDED_PARTNER]
+        partner_rows_lookup = {}
+        for s in performance.partners:
+            partner_rows_lookup[s.partner_id] = [
+                r for r in all_rows if r.partner_id == s.partner_id
+            ]
+
+    blended_revenue = sum(r.revenue_cents for r in blended_rows)
+    blended_payouts = sum(r.payouts_cents for r in blended_rows)
+    blended_cos = sum(r.cost_of_service_cents for r in blended_rows)
     blended_contribution = blended_revenue - blended_payouts - blended_cos
-    blended_ancillaries = sum(r.ancillaries_sold for r in blended_trailing)
+    blended_ancillaries = sum(r.ancillaries_sold for r in blended_rows)
 
     # ---------------------------------------------------------------------
     # Split cost_of_service into processing + servicing using existing
@@ -103,8 +130,9 @@ def build_pnl_flow(
     # ---------------------------------------------------------------------
     partner_rows: list[tuple[str, int, float]] = []
     for status in performance.partners:
-        rev = sum(r.revenue_cents for r in status.trailing)
-        gm = sum(r.gross_margin_cents for r in status.trailing)
+        rows_for_partner = partner_rows_lookup.get(status.partner_id, [])
+        rev = sum(r.revenue_cents for r in rows_for_partner)
+        gm = sum(r.gross_margin_cents for r in rows_for_partner)
         margin = (gm / rev) if rev else 0.0
         partner_rows.append((status.display_name, rev, margin))
 

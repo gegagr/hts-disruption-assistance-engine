@@ -25,7 +25,8 @@ ENGINE_DIR = REPO_ROOT / "src" / "engine"
 ALLOWED_NUMERICS: set[int | float] = {
     0, 1, -1,
     100, 1000, 10000, # unit conversion constants
-    52,                                # weeks-in-a-year (calendar invariant)
+    7,                                  # days-in-a-week (calendar invariant)
+    52,                                 # weeks-in-a-year (calendar invariant)
     2,                                  # binary-arm enumerations
 }
 
