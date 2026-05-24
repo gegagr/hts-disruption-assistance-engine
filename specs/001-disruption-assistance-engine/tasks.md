@@ -252,6 +252,7 @@ clean, manual acceptance walkthrough.
 - [X] T072 [P] Walk through every spec acceptance scenario (US1–US5) and tick them off against the running app + exports. Record any gap as a follow-up issue, not a silent fix.
 - [X] T073 Update `CLAUDE.md` if any implementation surface diverged from the plan (paths, public function names). Otherwise leave as-is.
 - [X] T074 [P] Test `tests/unit/test_no_hardcoded_literals.py`: AST-walk every `src/engine/*.py` file; fail the test if any `ast.Constant` of type `int` or `float` appears outside (a) the values `0` and `1`, (b) type annotations, (c) module-level dunder assignments (`__all__` indices etc.), (d) explicitly whitelisted lines marked with a `# noqa: literal` comment. Enforces Constitution Principle II + Engineering Constraint that no numeric input may be hardcoded in logic.
+- [X] T075 [US1-polish] Implement P&L-flow Sankey for the Performance view (FR-008a). Engine helper `src/engine/pnl_flow.py` exposes typed `PnlFlow` assembled from already-computed `PerformanceView` totals (processing/servicing split derived from registry primitives — no new logic, no new hardcoded literals). UI render in `src/ui/performance.py` using `plotly.graph_objects.Sankey` (dark template, transparent backgrounds; node colour by category; link colour = target category at 0.35 alpha). Test `tests/unit/test_pnl_flow.py` enforces the three balance identities and reconciliation with `PerformanceView` totals. `plotly>=5.20` added to `pyproject.toml`. Scope strictly: Performance view files + new helper/test + `pyproject.toml`.
 
 ---
 

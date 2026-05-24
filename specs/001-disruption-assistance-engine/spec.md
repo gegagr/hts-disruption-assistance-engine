@@ -42,6 +42,19 @@ we standardise on?"
   structural-vs-event-driven classification and populated partner×route×A/B
   cells.
 
+### Session 2026-05-24
+
+- Q: Add a P&L-flow visualisation to the Performance tab? → A: Yes — a
+  presentation-only Sankey below the per-partner status block, computed
+  over the same as-of week + trailing window the rest of the Performance
+  view uses. NO new financial logic: the engine emits a typed structure
+  assembled from already-computed `PerformanceView` totals (the
+  processing/servicing split is derived from existing registry-driven
+  primitives — `payment_processing_pct` and `servicing_cost_per_unit_cents`
+  — applied to existing engine outputs). The picture must reconcile with
+  the tiles above it by three named balance identities (see FR-008a)
+  enforced by test. See [src/engine/pnl_flow.py](../../src/engine/pnl_flow.py).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Read current-week performance across partners (Priority: P1)
@@ -347,6 +360,21 @@ figure shown on screen plus the briefing.
   (d) MUST NOT restate any number already visible on screen — it adds
       classification, attribution, and threshold context only;
   (e) reads across all partners (book-wide), not one at a time.
+- **FR-008a**: The Performance view MUST also surface a **P&L-flow Sankey**
+  over the same as-of week + trailing window the rest of the view uses,
+  showing the blended book from per-partner revenue sources through
+  Revenue → {Customer Payouts, Operating Costs → (Processing, Servicing),
+  Gross Contribution}. The Sankey is **presentation-only** — it MUST NOT
+  introduce any new computed number; the engine assembles a typed
+  structure from already-computed `PerformanceView` totals (the
+  processing/servicing split is derived from existing registry-driven
+  primitives, not new logic). Three balance identities MUST hold by
+  construction and MUST be enforced by automated test:
+  (i)   `sum(partner revenue) == revenue`,
+  (ii)  `payouts + operating_costs + gross_contribution == revenue`,
+  (iii) `processing + servicing == operating_costs`.
+  Partner source nodes MUST annotate margin %; downstream nodes MUST
+  annotate "% of revenue" (or "% of operating costs" for the cost split).
 
 **Variance view**
 
