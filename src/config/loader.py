@@ -1,6 +1,7 @@
 """Load and validate the assumption registry."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,15 @@ class RegistryLoadError(Exception):
     Includes the full pydantic validation path so a finance reader can locate
     the offending entry (FR-029 edge case: missing/invalid assumption).
     """
+
+
+# (legacy key, replacement key) pairs. Pre-empt the generic
+# "extra fields not permitted" pydantic error with an actionable migration
+# hint per feature 002 (FR-102).
+_LEGACY_FEE_KEYS: tuple[tuple[str, str], ...] = (
+    ("control_cents", "control_pct"),
+    ("test_cents", "test_pct"),
+)
 
 
 def load_registry(path: str | Path = "config/registry.yaml") -> Registry:
@@ -35,10 +45,29 @@ def load_registry(path: str | Path = "config/registry.yaml") -> Registry:
             f"Registry root must be a mapping, got {type(raw).__name__}"
         )
 
+    _check_legacy_fee_keys(raw)
+
     try:
         return Registry.model_validate(raw)
     except ValidationError as exc:
         raise RegistryLoadError(_format_validation_error(exc)) from exc
+
+
+def _check_legacy_fee_keys(raw: Mapping[str, Any]) -> None:
+    """FR-102 — replace pydantic's generic extra-keys error with an actionable
+    migration hint when the well-known legacy fee_level keys are present."""
+    fee_level = raw.get("fee_level")
+    if not isinstance(fee_level, Mapping):
+        return
+    for old, new in _LEGACY_FEE_KEYS:
+        if old in fee_level:
+            raise RegistryLoadError(
+                f"fee_level.{old} was removed in feature 002 "
+                "(fee-as-fare-pct). Replace with "
+                f"`fee_level.{new}` (float in (0, 1)). See "
+                "specs/002-fee-as-fare-pct/quickstart.md for the "
+                "migration steps."
+            )
 
 
 def _format_validation_error(exc: ValidationError) -> str:

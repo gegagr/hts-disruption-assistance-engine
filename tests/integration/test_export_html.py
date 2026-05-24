@@ -40,6 +40,7 @@ def html_path(tmp_path_factory):
         projection=pj,
         briefing=briefing,
         consistency=consistency,
+        registry=registry,
         path=out,
     )
     return out
@@ -104,3 +105,24 @@ def test_consistency_banner_present(soup) -> None:
     assert banner is not None
     classes = banner.get("class", [])
     assert "pass" in classes or "fail" in classes
+
+
+# -- Feature 002 (FR-111) — A/B section uses "% of fare" labels --------------
+
+def test_ab_section_uses_percentage_of_fare_labels(soup) -> None:
+    """FR-111 — every user-facing surface expresses arms in % of fare."""
+    ab_section = soup.find(id="ab-test")
+    assert ab_section is not None
+    text = ab_section.get_text(" ", strip=True)
+    assert "of fare" in text, "A/B section missing '% of fare' phrasing"
+
+
+def test_ab_section_has_no_flat_euro_fee_labels(soup) -> None:
+    """FR-111 / SC-104 — no legacy €12 / €9 fee labels survive."""
+    ab_section = soup.find(id="ab-test")
+    assert ab_section is not None
+    text = ab_section.get_text(" ", strip=True)
+    # These are the specific legacy strings that would have appeared
+    # in the pre-002 UI labels. Treat as forbidden in the A/B context.
+    assert "€12)" not in text
+    assert "€9)" not in text

@@ -78,8 +78,8 @@ def generate_dataset(
     baseline_attach = registry.dataset.baseline_attach_rate.value
     baseline_cancel = registry.dataset.baseline_realised_cancel_rate.value
     coverage_pct = registry.coverage_pct.value
-    fee_control = registry.fee_level.control_cents.value
-    fee_test = registry.fee_level.test_cents.value
+    fee_control_pct = registry.fee_level.control_pct.value
+    fee_test_pct = registry.fee_level.test_pct.value
     split_date = registry.ab.split_date.value
     test_share_by_type = registry.ab.test_share_by_partner_type.value
     events: list[MarketEvent] = sorted(registry.events.value, key=lambda e: e.id)
@@ -159,17 +159,19 @@ def generate_dataset(
                 cancel_p = min(cancel_p, 1.0)
                 cancelled = bool(rng.random() < cancel_p)
 
-                # A/B arm + fee
+                # A/B arm + fee (feature 002: fee = fee_pct × fare per booking)
                 if booking_date < split_date:
                     ab_arm = "pre_split"
-                    fee_for_arm = fee_control
+                    fee_pct_for_arm = fee_control_pct
                 else:
                     test_share = test_share_by_type[partner_type]
                     is_test = bool(rng.random() < test_share)
                     ab_arm = "test" if is_test else "control"
-                    fee_for_arm = fee_test if is_test else fee_control
+                    fee_pct_for_arm = fee_test_pct if is_test else fee_control_pct
 
-                fee_cents = fee_for_arm if ancillary_purchased else None
+                fee_cents = (
+                    round(fee_pct_for_arm * fare) if ancillary_purchased else None
+                )
                 payout_cents = (
                     round(coverage_pct * fare)
                     if (ancillary_purchased and cancelled)

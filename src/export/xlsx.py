@@ -3,7 +3,7 @@
 The Assumptions sheet exposes every registry leaf as a workbook-scoped
 named range. Every derived sheet references those names via formula
 strings, NOT pre-evaluated constants — so a finance reader can edit
-`fee_level_control_cents` in Excel and watch dependent cells recompute.
+`fee_level_control_pct` in Excel and watch dependent cells recompute.
 
 Constitution Principles II + VI: single source of assumptions + outputs
 interrogable by a finance person who doesn't read code.
@@ -57,7 +57,7 @@ def write_workbook(
     _write_weekly_aggregates(wb, registry, bookings_df)
     _write_performance(wb, performance)
     _write_variance(wb, variance)
-    _write_ab_test(wb, ab_test)
+    _write_ab_test(wb, ab_test, registry)
     _write_projection(wb, projection)
     _write_briefing(wb, briefing)
     _write_consistency(wb, consistency)
@@ -133,18 +133,18 @@ def _write_assumptions(wb: Workbook, registry: Registry) -> dict[str, str]:
         registry.servicing_cost_per_unit_cents.notes,
     )
     _add(
-        "fee_level_control_cents",
-        registry.fee_level.control_cents.value,
-        registry.fee_level.control_cents.origin,
-        registry.fee_level.control_cents.source,
-        registry.fee_level.control_cents.notes,
+        "fee_level_control_pct",
+        registry.fee_level.control_pct.value,
+        registry.fee_level.control_pct.origin,
+        registry.fee_level.control_pct.source,
+        registry.fee_level.control_pct.notes,
     )
     _add(
-        "fee_level_test_cents",
-        registry.fee_level.test_cents.value,
-        registry.fee_level.test_cents.origin,
-        registry.fee_level.test_cents.source,
-        registry.fee_level.test_cents.notes,
+        "fee_level_test_pct",
+        registry.fee_level.test_pct.value,
+        registry.fee_level.test_pct.origin,
+        registry.fee_level.test_pct.source,
+        registry.fee_level.test_pct.notes,
     )
     _add(
         "margin_floor_bps",
@@ -452,23 +452,32 @@ def _write_variance(wb: Workbook, variance: VarianceView) -> None:
         ws.column_dimensions[chr(64 + i)].width = 22
 
 
-def _write_ab_test(wb: Workbook, ab: ABTestView) -> None:
-    ws = wb.create_sheet("ABTest")
-    ws["A1"] = f"A/B Test — as of week {ab.as_of_week} · split {ab.split_date}"
-    ws["A1"].font = Font(bold=True, size=12)
-    ws["A2"] = f"Mix-control method: {ab.mix_control_method}"
+def _write_ab_test(wb: Workbook, ab: ABTestView, registry: Registry) -> None:
+    ctl_pct = registry.fee_level.control_pct.value
+    tst_pct = registry.fee_level.test_pct.value
+    ctl_label = f"Current fee ({_fmt_pct(ctl_pct, tst_pct)} of fare)"
+    tst_label = f"Lower fee ({_fmt_pct(tst_pct, ctl_pct)} of fare)"
 
-    ws["A4"] = "Arm sizes (post-split bookings)"
+    ws = wb.create_sheet("ABTest")
+    ws["A1"] = f"A/B Test — as of week {ab.as_of_week} · test launched {ab.split_date}"
+    ws["A1"].font = Font(bold=True, size=12)
+    ws["A2"] = f"Mix-adjustment: {ab.mix_control_method}"
+
+    ws["A4"] = "Arm sizes (bookings since test launch)"
     ws["A4"].font = Font(bold=True)
-    ws["A5"] = "Control"
+    ws["A5"] = ctl_label
     ws["B5"] = ab.arm_sizes["control"]
-    ws["A6"] = "Test"
+    ws["A6"] = tst_label
     ws["B6"] = ab.arm_sizes["test"]
 
     headers = [
-        "Metric", "Naive — control", "Naive — test",
-        "Stratified — control", "Stratified — test",
-        "Δ stratified (test − control)", "Winner",
+        "Metric",
+        f"Unadjusted — {ctl_label}",
+        f"Unadjusted — {tst_label}",
+        f"Adjusted for partner mix — {ctl_label}",
+        f"Adjusted for partner mix — {tst_label}",
+        "Δ adjusted (lower fee − current fee)",
+        "Winner",
     ]
     for col, h in enumerate(headers, start=1):
         c = ws.cell(row=8, column=col, value=h)
@@ -494,10 +503,10 @@ def _write_ab_test(wb: Workbook, ab: ABTestView) -> None:
     ws.cell(row=row, column=1, value="Winner on total contribution")
     ws.cell(row=row, column=2, value=ab.verdict.winner_on_total_contribution)
     row += 1
-    ws.cell(row=row, column=1, value="Total contribution — control (cents)")
+    ws.cell(row=row, column=1, value=f"Total contribution — {ctl_label} (cents)")
     ws.cell(row=row, column=2, value=ab.verdict.total_contribution_cents["control"])
     row += 1
-    ws.cell(row=row, column=1, value="Total contribution — test (cents)")
+    ws.cell(row=row, column=1, value=f"Total contribution — {tst_label} (cents)")
     ws.cell(row=row, column=2, value=ab.verdict.total_contribution_cents["test"])
     row += 2
     ws.cell(row=row, column=1, value="Tradeoff").font = Font(bold=True)
@@ -721,6 +730,13 @@ def _write_audit(wb: Workbook, performance: PerformanceView) -> None:
 
     for i, _ in enumerate(headers, start=1):
         ws.column_dimensions[chr(64 + i)].width = 32
+
+
+def _fmt_pct(pct: float, other: float) -> str:
+    """0dp normally; 1dp if both arms would render to the same integer percent."""
+    if round(pct * 100) == round(other * 100):
+        return f"{pct * 100:.1f}%"
+    return f"{pct * 100:.0f}%"
 
 
 # Silence unused import (used at type-check time only by callers)

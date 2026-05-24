@@ -24,6 +24,11 @@ def test_real_registry_loads(tmp_path: Path) -> None:
     assert reg.coverage_pct.value == 0.85
     # Origin tag survives
     assert reg.coverage_pct.origin == "disclosed"
+    # Feature 002 — new fee_pct keys present with the expected defaults
+    assert 0.0 < reg.fee_level.control_pct.value < 1.0
+    assert 0.0 < reg.fee_level.test_pct.value < 1.0
+    assert reg.fee_level.control_pct.origin == "disclosed"
+    assert reg.fee_level.test_pct.origin == "disclosed"
 
 
 def test_missing_origin_rejected(base_registry_raw: dict, tmp_path: Path) -> None:
@@ -93,3 +98,63 @@ def test_missing_file_raises_with_path(tmp_path: Path) -> None:
     with pytest.raises(RegistryLoadError) as exc:
         load_registry(missing)
     assert str(missing) in str(exc.value)
+
+
+# -- Feature 002 (fee-as-fare-pct) migration tests --------------------------
+
+def test_legacy_control_cents_key_rejected_with_migration_hint(
+    base_registry_raw: dict, tmp_path: Path
+) -> None:
+    """FR-102 / SC-106 — loader names both legacy key AND its replacement."""
+    raw = yaml.safe_load(yaml.safe_dump(base_registry_raw))
+    raw["fee_level"]["control_cents"] = {
+        "value": 1200,
+        "origin": "disclosed",
+        "source": "legacy",
+    }
+    path = tmp_path / "registry.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(RegistryLoadError) as exc:
+        load_registry(path)
+    msg = str(exc.value)
+    assert "control_cents" in msg
+    assert "control_pct" in msg
+
+
+def test_legacy_test_cents_key_rejected_with_migration_hint(
+    base_registry_raw: dict, tmp_path: Path
+) -> None:
+    """FR-102 / SC-106 — same for the test arm."""
+    raw = yaml.safe_load(yaml.safe_dump(base_registry_raw))
+    raw["fee_level"]["test_cents"] = {
+        "value": 900,
+        "origin": "disclosed",
+        "source": "legacy",
+    }
+    path = tmp_path / "registry.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(RegistryLoadError) as exc:
+        load_registry(path)
+    msg = str(exc.value)
+    assert "test_cents" in msg
+    assert "test_pct" in msg
+
+
+def test_fee_pct_zero_rejected(base_registry_raw: dict, tmp_path: Path) -> None:
+    """FR-101 — pct ∈ (0, 1) is strict open."""
+    raw = yaml.safe_load(yaml.safe_dump(base_registry_raw))
+    raw["fee_level"]["control_pct"]["value"] = 0.0
+    path = tmp_path / "registry.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(RegistryLoadError):
+        load_registry(path)
+
+
+def test_fee_pct_above_one_rejected(base_registry_raw: dict, tmp_path: Path) -> None:
+    """FR-101 — pct ∈ (0, 1) is strict open."""
+    raw = yaml.safe_load(yaml.safe_dump(base_registry_raw))
+    raw["fee_level"]["control_pct"]["value"] = 1.5
+    path = tmp_path / "registry.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(RegistryLoadError):
+        load_registry(path)

@@ -54,6 +54,12 @@ we standardise on?"
   — applied to existing engine outputs). The picture must reconcile with
   the tiles above it by three named balance identities (see FR-008a)
   enforced by test. See [src/engine/pnl_flow.py](../../src/engine/pnl_flow.py).
+- Q: Fee primitive shape → A: **Replaced by feature 002 (fee-as-fare-pct).**
+  Original FR-005 fee_level keys (`control_cents`, `test_cents`) are
+  superseded by `control_pct` / `test_pct`; the per-booking revenue
+  derivation in FR-007 is superseded by FR-104 in spec 002
+  (`fee_cents = round(fee_pct × fare_cents)`). See
+  [specs/002-fee-as-fare-pct/](../002-fee-as-fare-pct/) for the migration.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -320,12 +326,17 @@ figure shown on screen plus the briefing.
   levels, coverage percentage, margin floor, trailing window length, material
   gap threshold, projection start parameters) MUST live in exactly one
   configuration location. No input may be hardcoded in computation logic.
+  _[Fee-level shape superseded by spec 002 FR-101: `fee_level.control_pct`
+  and `fee_level.test_pct` instead of `*_cents`.]_
 - **FR-006**: Every input in the registry MUST carry an origin label drawn
   from: `measured-from-data`, `disclosed`, `observed`, `assumed`. Where
   applicable, an input MUST also carry a citation or dataset reference.
 - **FR-007**: Derived values MUST be computed at use time from their
   constituent inputs and MUST NOT be stored alongside the inputs they depend
-  on. The canonical derivations for this build are:
+  on. _[Per-booking fee derivation superseded by spec 002 FR-104:
+  `fee_cents = round(fee_pct_for_arm × fare_cents)` per booking, not a
+  flat constant. The other derivations below are unchanged.]_ The canonical
+  derivations for this build are:
     - `payout_per_cancelled_ancillary = coverage_pct × fare`
     - `cost_of_service_per_ancillary = (fee_charged × payment_processing_pct)
       + servicing_cost_per_unit`

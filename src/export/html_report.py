@@ -10,6 +10,7 @@ from pathlib import Path
 
 from jinja2 import BaseLoader, Environment, select_autoescape
 
+from src.config.schema import Registry
 from src.engine.ab_test import ABTestView
 from src.engine.briefing import Briefing
 from src.engine.consistency import ConsistencyReport
@@ -160,19 +161,19 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 </section>
 
 <section class="section" id="ab-test">
-  <h2>A/B Test — control vs test fee</h2>
+  <h2>A/B Test — {{ current_label }} vs {{ lower_label }}</h2>
   <p class="note">
-    Arm sizes (post-split bookings): control {{ "{:,}".format(ab.arm_sizes['control']) }} ·
-    test {{ "{:,}".format(ab.arm_sizes['test']) }} ·
-    mix-control method: {{ ab.mix_control_method }}<span class="origin" style="background:{{ origin_colour(ab.reference_mix_origin) }}">{{ origin_letter(ab.reference_mix_origin) }}</span>
+    Arm sizes (bookings since test launch): {{ current_label }} {{ "{:,}".format(ab.arm_sizes['control']) }} ·
+    {{ lower_label }} {{ "{:,}".format(ab.arm_sizes['test']) }} ·
+    mix-adjustment: {{ ab.mix_control_method }}<span class="origin" style="background:{{ origin_colour(ab.reference_mix_origin) }}">{{ origin_letter(ab.reference_mix_origin) }}</span>
   </p>
   <table>
     <thead><tr>
       <th>Metric</th>
-      <th class="num">Naive — control</th>
-      <th class="num">Naive — test</th>
-      <th class="num">Stratified — control</th>
-      <th class="num">Stratified — test</th>
+      <th class="num">Unadjusted — {{ current_label }}</th>
+      <th class="num">Unadjusted — {{ lower_label }}</th>
+      <th class="num">Adjusted for partner mix — {{ current_label }}</th>
+      <th class="num">Adjusted for partner mix — {{ lower_label }}</th>
       <th>Winner</th>
     </tr></thead>
     <tbody>
@@ -191,8 +192,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   <h3>Verdict</h3>
   <p><strong>Winner on contribution per booking</strong>: {{ ab.verdict.winner_on_contribution_per_booking }} ·
      <strong>winner on total contribution</strong>: {{ ab.verdict.winner_on_total_contribution }}</p>
-  <p>Total contribution — control: <span class="figure" data-figure-id="ab.total.control">{{ fmt_eur(ab.verdict.total_contribution_cents['control']) }}</span>
-     · test: <span class="figure" data-figure-id="ab.total.test">{{ fmt_eur(ab.verdict.total_contribution_cents['test']) }}</span></p>
+  <p>Total contribution — {{ current_label }}: <span class="figure" data-figure-id="ab.total.control">{{ fmt_eur(ab.verdict.total_contribution_cents['control']) }}</span>
+     · {{ lower_label }}: <span class="figure" data-figure-id="ab.total.test">{{ fmt_eur(ab.verdict.total_contribution_cents['test']) }}</span></p>
   <p class="note">{{ ab.verdict.tradeoff_summary }}</p>
 </section>
 
@@ -273,11 +274,18 @@ def _fmt_driver(name: str, value: float) -> str:
     return f"{value:,.4f}"
 
 
-def _pretty_scenario(s: str) -> str:
+def _pretty_scenario(s: str, current_label: str, lower_label: str) -> str:
     return {
-        "standardise_on_control": "Standardise on control fee",
-        "standardise_on_test": "Standardise on test fee",
+        "standardise_on_control": f"Standardise on {current_label}",
+        "standardise_on_test": f"Standardise on {lower_label}",
     }.get(s, s)
+
+
+def _fmt_arm_pct(pct: float, other: float) -> str:
+    """Format a fee percentage for an arm label; use 1dp if both arms collide at 0dp."""
+    if round(pct * 100) == round(other * 100):
+        return f"{pct * 100:.1f}%"
+    return f"{pct * 100:.0f}%"
 
 
 def write_report(
@@ -288,14 +296,22 @@ def write_report(
     projection: ProjectionView,
     briefing: Briefing,
     consistency: ConsistencyReport,
+    registry: Registry,
     path: str | Path,
 ) -> Path:
+    ctl_pct = registry.fee_level.control_pct.value
+    tst_pct = registry.fee_level.test_pct.value
+    current_label = f"Current fee ({_fmt_arm_pct(ctl_pct, tst_pct)} of fare)"
+    lower_label = f"Lower fee ({_fmt_arm_pct(tst_pct, ctl_pct)} of fare)"
+
     env = Environment(loader=BaseLoader(), autoescape=select_autoescape())
     env.globals["fmt_eur"] = _fmt_eur
     env.globals["fmt_pct"] = _fmt_pct
     env.globals["fmt_metric"] = _fmt_metric
     env.globals["fmt_driver"] = _fmt_driver
-    env.globals["pretty_scenario"] = _pretty_scenario
+    env.globals["pretty_scenario"] = lambda s: _pretty_scenario(
+        s, current_label, lower_label
+    )
     env.globals["origin_colour"] = lambda o: ORIGIN_COLOURS.get(o, "#eee")
     env.globals["origin_letter"] = lambda o: ORIGIN_LETTERS.get(o, "?")
     env.globals["origin_colours"] = ORIGIN_COLOURS
@@ -313,6 +329,8 @@ def write_report(
         variance=variance,
         ab=ab_test,
         projection=projection,
+        current_label=current_label,
+        lower_label=lower_label,
     )
 
     out = Path(path)

@@ -15,7 +15,12 @@ from src.config.loader import RegistryLoadError, load_registry
 from src.engine.ab_test import ABTestView, compute_ab
 from src.engine.briefing import Briefing, compute_briefing
 from src.engine.consistency import ConsistencyReport, check_consistency
-from src.engine.dataset import load_bookings, max_iso_week, regenerate
+from src.engine.dataset import (
+    is_fee_distribution_consistent,
+    load_bookings,
+    max_iso_week,
+    regenerate,
+)
 from src.engine.performance import PerformanceView, compute_performance
 from src.engine.projection import ProjectionView, compute_projection
 from src.engine.variance import VarianceView, compute_variance
@@ -36,6 +41,7 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    _inject_polish_css()
 
     try:
         registry = load_registry(REGISTRY_PATH)
@@ -52,6 +58,13 @@ def main() -> None:
 
     bookings = _load_bookings(str(BOOKINGS_PARQUET))
     max_week = max_iso_week(bookings)
+
+    if not is_fee_distribution_consistent(bookings, registry):
+        st.warning(
+            "Synthetic dataset is stale relative to the current registry "
+            "(fee-model shape differs). Run `python -m src.cli.generate_data` "
+            "from the project root, then refresh this page."
+        )
 
     # Sidebar
     st.sidebar.title("HTS DA Engine")
@@ -109,9 +122,9 @@ def main() -> None:
     with tab_var:
         variance_page.render(vv)
     with tab_ab:
-        ab_test_page.render(ab)
+        ab_test_page.render(ab, registry)
     with tab_proj:
-        projection_page.render(pj)
+        projection_page.render(pj, registry)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +210,49 @@ def _check_consistency_cached(
 
 
 EXPORT_DIR = Path(__file__).resolve().parents[2] / "exports"
+
+
+_POLISH_CSS = """
+<style>
+/* Big numeric figures read as data: mono + tabular numerals. */
+[data-testid="stMetricValue"],
+[data-testid="stMetricDelta"] {
+    font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace !important;
+    font-variant-numeric: tabular-nums;
+}
+[data-testid="stMetricValue"] {
+    font-size: 1.5rem;
+    font-weight: 500;
+}
+/* Section headers use the heading font. */
+h1, h2, h3, h4 {
+    font-family: 'Fraunces', Georgia, serif !important;
+    letter-spacing: -0.005em;
+}
+h1 { font-weight: 600; }
+h2 { font-weight: 500; margin-top: 1.5rem !important; }
+h3 { font-weight: 500; margin-top: 1.0rem !important; }
+/* Tighten vertical rhythm. */
+[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlock"] {
+    gap: 0.6rem;
+}
+/* Subtle card treatment on bordered containers (per-partner blocks). */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    border-radius: 10px !important;
+    padding: 14px 16px !important;
+    background: rgba(255, 255, 255, 0.015) !important;
+}
+/* Sidebar buttons sit a little tighter. */
+section[data-testid="stSidebar"] button {
+    border-radius: 8px;
+}
+</style>
+"""
+
+
+def _inject_polish_css() -> None:
+    st.markdown(_POLISH_CSS, unsafe_allow_html=True)
 
 
 def _run_export(*, as_of_week: int, llm_enabled: bool) -> None:

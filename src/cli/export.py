@@ -126,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             projection=pj,
             briefing=briefing,
             consistency=consistency,
+            registry=registry,
             path=html_path,
         )
         print(f"wrote {html_path}")

@@ -64,8 +64,8 @@ def test_named_ranges_defined_for_every_registry_leaf(workbook_path: Path) -> No
         "coverage_pct",
         "payment_processing_pct",
         "servicing_cost_per_unit_cents",
-        "fee_level_control_cents",
-        "fee_level_test_cents",
+        "fee_level_control_pct",
+        "fee_level_test_pct",
         "margin_floor_bps",
         "classification_material_gap_bps",
         "projection_trend_factor",
@@ -73,6 +73,9 @@ def test_named_ranges_defined_for_every_registry_leaf(workbook_path: Path) -> No
     assert must_have.issubset(names), f"missing names: {must_have - names}"
     # Per-partner named ranges
     assert any(n.startswith("partner_") and n.endswith("_priced_cancel_rate") for n in names)
+    # Feature 002 — legacy named ranges removed
+    assert "fee_level_control_cents" not in names
+    assert "fee_level_test_cents" not in names
 
 
 def test_variance_sheet_uses_named_ranges_in_formulas(workbook_path: Path) -> None:

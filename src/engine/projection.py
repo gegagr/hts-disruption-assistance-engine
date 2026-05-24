@@ -7,6 +7,7 @@ its registry origin tag (Constitution Principle III).
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Literal
 
 import pandas as pd
@@ -20,11 +21,16 @@ Scenario = Literal["standardise_on_control", "standardise_on_test"]
 METHODOLOGY_NOTE = (
     "Deterministic 52-week projection. Per scenario s ∈ {control, test}: "
     "weekly volume = trailing_13w_avg(volume) × trend_factor. "
-    "Per-ancillary economics: fee[s] from registry; loss_ratio[s] = stratified "
+    "Per-ancillary economics (FR-122): revenue_per_ancillary = "
+    "round(fee_pct[s] × avg_fare), where avg_fare is the trailing-window "
+    "mean fare across ancillaries sold (future per-booking fares are "
+    "unknown, so the projection uses the average — distinct from the "
+    "per-booking actuals derivation in FR-104). loss_ratio[s] = stratified "
     "loss_ratio from the A/B view; cost_of_service per ancillary = "
-    "fee[s] × payment_processing_pct + servicing_cost_per_unit. "
-    "Weekly revenue = volume × attach_rate[s] × fee[s]; payouts = revenue × "
-    "loss_ratio[s]; contribution = revenue − payouts − cost_of_service_total."
+    "round(revenue_per_ancillary × payment_processing_pct) + "
+    "servicing_cost_per_unit. Weekly revenue = volume × attach_rate[s] × "
+    "revenue_per_ancillary; payouts = revenue × loss_ratio[s]; contribution "
+    "= revenue − payouts − cost_of_service_total."
 )
 
 
@@ -89,14 +95,16 @@ def compute_projection(
     trailing_window = registry.metrics.trailing_window_weeks.value
     pp_pct = registry.payment_processing_pct.value
     servicing = registry.servicing_cost_per_unit_cents.value
-    fee_control = registry.fee_level.control_cents.value
-    fee_test = registry.fee_level.test_cents.value
+    fee_control_pct = registry.fee_level.control_pct.value
+    fee_test_pct = registry.fee_level.test_pct.value
 
     max_week = int(bookings["iso_week"].max())
     if as_of_week is None:
         as_of_week = max_week
 
-    # Trailing-window slice for volume
+    # Trailing-window slice for volume + avg-fare driver (FR-122: projection
+    # uses trailing-window avg fare because future per-booking fares are
+    # unknown — distinct from the actuals' per-booking derivation in FR-104).
     window_start = as_of_week - trailing_window + 1
     window = bookings[
         (bookings["iso_week"] >= window_start)
@@ -105,6 +113,13 @@ def compute_projection(
     weeks_observed = max(1, window["iso_week"].nunique())
     trailing_volume_avg = len(window) / weeks_observed
     weekly_volume = trailing_volume_avg * trend_factor
+
+    # Average fare across ancillaries sold in the trailing window — the
+    # projection's fare basis. Drawn from booking facts; origin = measured.
+    sold_in_window = window[window["ancillary_purchased"].astype(bool)]
+    avg_fare_cents = (
+        float(sold_in_window["fare_cents"].mean()) if len(sold_in_window) > 0 else 0.0
+    )
 
     # Per-arm stratified metrics from the A/B view
     attach_metric = next(m for m in ab_test.metrics if m.metric == "attach_rate")
@@ -117,9 +132,9 @@ def compute_projection(
     loss_per_arm = loss_metric.stratified
 
     scenarios: list[Scenario] = ["standardise_on_control", "standardise_on_test"]
-    fee_by_scenario: dict[Scenario, int] = {
-        "standardise_on_control": fee_control,
-        "standardise_on_test": fee_test,
+    fee_pct_by_scenario: dict[Scenario, float] = {
+        "standardise_on_control": fee_control_pct,
+        "standardise_on_test": fee_test_pct,
     }
     arm_by_scenario: dict[Scenario, str] = {
         "standardise_on_control": "control",
@@ -143,12 +158,14 @@ def compute_projection(
         arm = arm_by_scenario[s]
         attach = attach_per_arm[arm]
         loss = loss_per_arm[arm]
-        fee = fee_by_scenario[s]
-        cos_per_ancillary = round(fee * pp_pct) + servicing
+        fee_pct = fee_pct_by_scenario[s]
+        # FR-122: per-ancillary revenue = round(fee_pct × avg_fare).
+        revenue_per_ancillary = round(fee_pct * avg_fare_cents)
+        cos_per_ancillary = round(revenue_per_ancillary * pp_pct) + servicing
         for offset in range(1, weeks_forward + 1):
             vol = round(weekly_volume)
             ancillaries = round(vol * attach)
-            revenue = ancillaries * fee
+            revenue = ancillaries * revenue_per_ancillary
             payouts = round(revenue * loss)
             cos_total = ancillaries * cos_per_ancillary
             contribution = revenue - payouts - cos_total
@@ -190,6 +207,7 @@ def compute_projection(
         registry=registry,
         weekly_volume=weekly_volume,
         trailing_volume_avg=trailing_volume_avg,
+        avg_fare_cents=avg_fare_cents,
         trend_factor=trend_factor,
         attach_per_arm=attach_per_arm,
         loss_per_arm=loss_per_arm,
@@ -216,6 +234,7 @@ def _build_drivers(
     registry: Registry,
     weekly_volume: float,
     trailing_volume_avg: float,
+    avg_fare_cents: float,
     trend_factor: float,
     attach_per_arm: dict[str, float],
     loss_per_arm: dict[str, float],
@@ -285,20 +304,38 @@ def _build_drivers(
 
     drivers.append(
         ProjectionDriver(
-            name="fee_level_control_cents",
-            value=float(registry.fee_level.control_cents.value),
-            origin=registry.fee_level.control_cents.origin,
-            source=registry.fee_level.control_cents.source,
-            formula="registry.fee_level.control_cents",
+            name="fee_level_control_pct",
+            value=registry.fee_level.control_pct.value,
+            origin=registry.fee_level.control_pct.origin,
+            source=registry.fee_level.control_pct.source,
+            formula=(
+                "registry.fee_level.control_pct (applied as: "
+                "revenue_per_ancillary = round(fee_pct × avg_fare))"
+            ),
         )
     )
     drivers.append(
         ProjectionDriver(
-            name="fee_level_test_cents",
-            value=float(registry.fee_level.test_cents.value),
-            origin=registry.fee_level.test_cents.origin,
-            source=registry.fee_level.test_cents.source,
-            formula="registry.fee_level.test_cents",
+            name="fee_level_test_pct",
+            value=registry.fee_level.test_pct.value,
+            origin=registry.fee_level.test_pct.origin,
+            source=registry.fee_level.test_pct.source,
+            formula=(
+                "registry.fee_level.test_pct (applied as: "
+                "revenue_per_ancillary = round(fee_pct × avg_fare))"
+            ),
+        )
+    )
+    drivers.append(
+        ProjectionDriver(
+            name="avg_fare_cents_trailing",
+            value=avg_fare_cents,
+            origin="measured-from-data",
+            source=None,
+            formula=(
+                "mean(fare_cents) over ancillaries sold in the trailing "
+                "window — projection's fare basis (FR-122)"
+            ),
         )
     )
     drivers.append(
@@ -307,7 +344,7 @@ def _build_drivers(
             value=registry.payment_processing_pct.value,
             origin=registry.payment_processing_pct.origin,
             source=registry.payment_processing_pct.source,
-            formula="registry.payment_processing_pct (× fee → processing cost per ancillary)",
+            formula="registry.payment_processing_pct (× revenue → processing cost per ancillary)",
         )
     )
     drivers.append(
@@ -329,3 +366,63 @@ def _build_drivers(
         )
     )
     return drivers
+
+
+# ---------------------------------------------------------------------------
+# Monthly rollup (pure helper — UI consumes this, computes nothing itself)
+# ---------------------------------------------------------------------------
+
+class MonthlyProjectionPoint(BaseModel):
+    """One (scenario, calendar month) bucket of the projection."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scenario: Scenario
+    month_iso: str                       # "YYYY-MM" — sorts naturally
+    contribution_cents: int              # per-month contribution (not cumulative)
+    cumulative_contribution_cents: int   # running total through this month
+
+
+def roll_projection_to_months(
+    projection: ProjectionView,
+    start_date: date,
+) -> list[MonthlyProjectionPoint]:
+    """Roll the 52 weekly projection rows into calendar-month buckets.
+
+    Pure function over the existing projection output. Each weekly row's
+    contribution lands in the calendar month its ``iso_week`` Monday falls
+    in — same booking-week basis as the rest of the engine.
+
+    Reconciles with :attr:`ProjectionView.totals` by construction:
+    ``sum(month.contribution_cents for month in result if scenario==s) ==
+    projection.totals[s].contribution_cents`` for every scenario s.
+    """
+    # Group: (scenario, "YYYY-MM") → contribution_cents
+    buckets: dict[tuple[Scenario, str], int] = {}
+    for week in projection.weekly:
+        week_monday = start_date + timedelta(days=week.iso_week * 7)  # allow: literal — days-per-week
+        month_iso = f"{week_monday.year:04d}-{week_monday.month:02d}"
+        key = (week.scenario, month_iso)
+        buckets[key] = buckets.get(key, 0) + week.contribution_cents
+
+    # Sort: scenario in projection.scenarios order, then month_iso ascending.
+    scenario_order = {s: i for i, s in enumerate(projection.scenarios)}
+    ordered = sorted(
+        buckets.items(),
+        key=lambda kv: (scenario_order.get(kv[0][0], 0), kv[0][1]),
+    )
+
+    # Cumulative within scenario
+    points: list[MonthlyProjectionPoint] = []
+    running: dict[Scenario, int] = {s: 0 for s in projection.scenarios}
+    for (scenario, month_iso), contribution in ordered:
+        running[scenario] = running[scenario] + contribution
+        points.append(
+            MonthlyProjectionPoint(
+                scenario=scenario,
+                month_iso=month_iso,
+                contribution_cents=contribution,
+                cumulative_contribution_cents=running[scenario],
+            )
+        )
+    return points

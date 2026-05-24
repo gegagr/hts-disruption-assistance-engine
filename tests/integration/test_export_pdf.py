@@ -45,7 +45,8 @@ def html_and_pdf(tmp_path_factory):
     html_path = outdir / "DA_Engine_test.html"
     write_report(
         performance=pv, variance=vv, ab_test=ab, projection=pj,
-        briefing=briefing, consistency=consistency, path=html_path,
+        briefing=briefing, consistency=consistency, registry=registry,
+        path=html_path,
     )
     pdf_path = outdir / "DA_Engine_test.pdf"
     try:

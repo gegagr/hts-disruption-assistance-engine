@@ -8,7 +8,7 @@ import pytest
 from src.config.loader import load_registry
 from src.data.generator import generate_dataset
 from src.engine.ab_test import compute_ab
-from src.engine.projection import compute_projection
+from src.engine.projection import compute_projection, roll_projection_to_months
 
 REGISTRY_PATH = Path(__file__).resolve().parents[2] / "config" / "registry.yaml"
 
@@ -33,20 +33,26 @@ def test_two_scenarios_x_52_weeks(view) -> None:
 
 
 def test_weekly_cell_revenue_reconciles(view) -> None:
-    """volume × attach × fee == revenue per weekly row (engine derivation chain)."""
+    """volume × attach × revenue_per_ancillary == revenue (FR-122 derivation)."""
     registry, _, ab, pj = view
     attach_per_arm = next(
         m for m in ab.metrics if m.metric == "attach_rate"
     ).stratified
-    fee_control = registry.fee_level.control_cents.value
-    fee_test = registry.fee_level.test_cents.value
+    # Read the projection's avg_fare driver — it's the projection's fare basis.
+    avg_fare = next(
+        d.value for d in pj.drivers if d.name == "avg_fare_cents_trailing"
+    )
+    fee_control_pct = registry.fee_level.control_pct.value
+    fee_test_pct = registry.fee_level.test_pct.value
+    rev_per_ancillary_control = round(fee_control_pct * avg_fare)
+    rev_per_ancillary_test = round(fee_test_pct * avg_fare)
     for week in pj.weekly:
         if week.scenario == "standardise_on_control":
             expected_ancillaries = round(week.volume * attach_per_arm["control"])
-            expected_revenue = expected_ancillaries * fee_control
+            expected_revenue = expected_ancillaries * rev_per_ancillary_control
         else:
             expected_ancillaries = round(week.volume * attach_per_arm["test"])
-            expected_revenue = expected_ancillaries * fee_test
+            expected_revenue = expected_ancillaries * rev_per_ancillary_test
         assert week.ancillaries == expected_ancillaries
         assert week.revenue_cents == expected_revenue
 
@@ -97,3 +103,38 @@ def test_control_scenario_more_profitable_than_test_on_seeded_data(view) -> None
     ctl_total = pj.totals["standardise_on_control"].contribution_cents
     tst_total = pj.totals["standardise_on_test"].contribution_cents
     assert ctl_total > tst_total
+
+
+# ---------------------------------------------------------------------------
+# Monthly rollup reconciliation
+# ---------------------------------------------------------------------------
+
+def test_monthly_rollup_reconciles_to_scenario_totals(view) -> None:
+    """Per-month contributions sum to the 52-week scenario total; cumulative
+    of the last month for each scenario equals that total."""
+    registry, _, _, pj = view
+    months = roll_projection_to_months(pj, registry.dataset.start_date.value)
+
+    for scenario in pj.scenarios:
+        scenario_months = [m for m in months if m.scenario == scenario]
+        assert scenario_months, f"no monthly buckets for scenario {scenario}"
+        # Sum of per-month contribution equals the scenario total
+        assert sum(m.contribution_cents for m in scenario_months) == (
+            pj.totals[scenario].contribution_cents
+        )
+        # Cumulative final month equals the scenario total
+        assert (
+            scenario_months[-1].cumulative_contribution_cents
+            == pj.totals[scenario].contribution_cents
+        )
+
+
+def test_monthly_rollup_months_are_iso_yyyy_mm_and_sorted(view) -> None:
+    registry, _, _, pj = view
+    months = roll_projection_to_months(pj, registry.dataset.start_date.value)
+    for m in months:
+        assert len(m.month_iso) == 7 and m.month_iso[4] == "-"
+    # Each scenario's months are sorted ascending
+    for scenario in pj.scenarios:
+        s_months = [m.month_iso for m in months if m.scenario == scenario]
+        assert s_months == sorted(s_months)

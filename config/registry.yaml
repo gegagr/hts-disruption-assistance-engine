@@ -72,12 +72,14 @@ servicing_cost_per_unit_cents:
   notes: "Per-policy operating cost in EUR cents; refine when book matures."
 
 fee_level:
-  control_cents:
-    value: 1200
+  # Feature 002 (fee-as-fare-pct): fees are now a percentage of fare,
+  # applied per booking as round(fee_pct × fare_cents). See spec 002 FR-101.
+  control_pct:
+    value: 0.12
     origin: disclosed
     source: "Pricing committee 2025-11-04"
-  test_cents:
-    value: 900
+  test_pct:
+    value: 0.10
     origin: disclosed
     source: "Pricing committee 2025-11-04"
 

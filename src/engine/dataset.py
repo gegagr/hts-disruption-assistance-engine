@@ -31,3 +31,32 @@ def max_iso_week(bookings: pd.DataFrame) -> int:
     """Maximum week index present in the dataset."""
     return int(bookings["iso_week"].max())
 
+
+def is_fee_distribution_consistent(
+    bookings: pd.DataFrame, registry: Registry
+) -> bool:
+    """Heuristic: is the Parquet's fee distribution consistent with the
+    registry's fee-model shape? (Feature 002 — research §3.)
+
+    Under the new fee-as-fare-pct model, per-booking fees vary with fare —
+    so ``fee_cents.nunique()`` per arm is in the hundreds. Under the legacy
+    flat-fee model it was 1. If we see a near-constant fee distribution
+    within an arm, the parquet is stale relative to the new registry and
+    the user should regenerate.
+
+    Returns True when the distribution looks consistent (fresh dataset);
+    False when stale.
+    """
+    _ = registry  # the registry's role here is only "we are post-migration"
+    sold = bookings[bookings["ancillary_purchased"].astype(bool)]
+    for arm in ("control", "test"):
+        arm_rows = sold[sold["ab_arm"] == arm]
+        if len(arm_rows) == 0:
+            continue
+        # 2 distinct values would already be deeply suspicious under the
+        # new model (~150k bookings, many fare values, many resulting fees);
+        # 1 is a legacy-data smoking gun.
+        if int(arm_rows["fee_cents"].nunique()) <= 2:
+            return False
+    return True
+

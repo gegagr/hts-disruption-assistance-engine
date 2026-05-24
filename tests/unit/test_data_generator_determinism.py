@@ -44,6 +44,22 @@ def test_booking_invariants() -> None:
     assert (df["departure_date"] >= df["booking_date"]).all()
 
 
+def test_booking_fee_derivation_property_holds_for_every_sold_ancillary() -> None:
+    """Feature 002 SC-101 — 100% of sold ancillaries have
+    fee_cents == round(fee_pct_for_arm × fare_cents)."""
+    registry = load_registry(REGISTRY_PATH)
+    df = generate_dataset(registry, write_parquet=False)
+    ctl_pct = registry.fee_level.control_pct.value
+    tst_pct = registry.fee_level.test_pct.value
+
+    sold = df[df["ancillary_purchased"].astype(bool)].copy()
+    fee_pct = sold["ab_arm"].map(
+        {"control": ctl_pct, "pre_split": ctl_pct, "test": tst_pct}
+    )
+    expected_fee = (fee_pct * sold["fare_cents"]).round().astype("int64")
+    assert (sold["fee_cents"].astype("int64") == expected_fee).all()
+
+
 def test_pre_split_arm_matches_split_date() -> None:
     registry = load_registry(REGISTRY_PATH)
     df = generate_dataset(registry, write_parquet=False)

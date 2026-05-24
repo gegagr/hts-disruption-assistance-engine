@@ -1,14 +1,17 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-[specs/001-disruption-assistance-engine/plan.md](specs/001-disruption-assistance-engine/plan.md)
+[specs/002-fee-as-fare-pct/plan.md](specs/002-fee-as-fare-pct/plan.md)
 
-Supporting design artefacts in the same directory:
-- [spec.md](specs/001-disruption-assistance-engine/spec.md) — feature specification + clarifications
-- [research.md](specs/001-disruption-assistance-engine/research.md) — Phase 0 technical decisions
-- [data-model.md](specs/001-disruption-assistance-engine/data-model.md) — entities and engine outputs
-- [contracts/](specs/001-disruption-assistance-engine/contracts/) — registry, engine, briefing, export contracts
-- [quickstart.md](specs/001-disruption-assistance-engine/quickstart.md) — how to run the tool
+Active feature (002 — diff against the 001 baseline):
+- [spec.md](specs/002-fee-as-fare-pct/spec.md) — fee migrates from flat euros to % of fare
+- [research.md](specs/002-fee-as-fare-pct/research.md) — migration decisions (rounding, loader error, stale-data detection)
+- [data-model.md](specs/002-fee-as-fare-pct/data-model.md) — entity diff
+- [contracts/](specs/002-fee-as-fare-pct/contracts/) — registry-schema-diff + ui-and-export-labels
+- [quickstart.md](specs/002-fee-as-fare-pct/quickstart.md) — migration steps
+
+Baseline feature (001 — full original spec; everything 002 doesn't change):
+[specs/001-disruption-assistance-engine/](specs/001-disruption-assistance-engine/)
 
 Governing principles (non-negotiable):
 [.specify/memory/constitution.md](.specify/memory/constitution.md)

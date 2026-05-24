@@ -61,8 +61,20 @@ class DatasetConfig(BaseModel):
 
 class FeeLevelConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    control_cents: RegistryEntry[int]
-    test_cents: RegistryEntry[int]
+    control_pct: RegistryEntry[float]
+    test_pct: RegistryEntry[float]
+
+    @model_validator(mode="after")
+    def _pcts_in_open_unit(self) -> FeeLevelConfig:
+        for name, entry in (
+            ("control_pct", self.control_pct),
+            ("test_pct", self.test_pct),
+        ):
+            if not (0.0 < entry.value < 1.0):
+                raise ValueError(
+                    f"fee_level.{name}.value must be in (0, 1), got {entry.value}"
+                )
+        return self
 
 
 class ABConfig(BaseModel):
