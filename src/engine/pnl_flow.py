@@ -150,10 +150,13 @@ def build_pnl_flow(
         )
         return idx
 
-    # Partner source nodes — index 0..N-1 in stable Performance order
+    # Partner source nodes — index 0..N-1 in stable Performance order.
+    # The secondary metric names the period explicitly so a reader doesn't
+    # confuse it with the as-of-week tile on the Performance page.
+    period_suffix = "full book" if period == "full_book" else "trailing window"
     partner_indices: list[int] = []
     for display_name, rev, margin in partner_rows:
-        secondary = f"margin {margin * 100:.1f}%"
+        secondary = f"gross margin {margin * 100:.1f}% ({period_suffix})"
         partner_indices.append(
             _add_node(display_name, rev, "revenue_source", secondary)
         )

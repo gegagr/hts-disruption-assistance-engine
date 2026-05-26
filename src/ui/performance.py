@@ -234,11 +234,11 @@ _DETAIL_COLUMN_Y: dict[str, float] = {
 def _render_pnl_flow(view: PerformanceView, registry: Registry) -> None:
     st.markdown("### P&L flow — full book")
     st.caption(
-        "Blended book over the full booking history (distinct from the "
-        "as-of-week KPIs above, which use the trailing window). Per-partner "
-        "revenue → Revenue → {Customer Payouts, Operating Costs (Processing "
-        "+ Servicing), Gross Contribution}. Flows balance by construction "
-        "(see tests/unit/test_pnl_flow.py)."
+        "Time window: the **full booking history** (all weeks since the "
+        "dataset start), not the as-of-week shown in the tiles above. "
+        "Per-partner revenue → Revenue → {Customer Payouts, Operating Costs "
+        "(Processing + Servicing), Gross Contribution}. Flows balance by "
+        "construction (see tests/unit/test_pnl_flow.py)."
     )
 
     bookings = load_bookings()
