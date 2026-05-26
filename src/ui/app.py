@@ -43,6 +43,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     _inject_polish_css()
+    _mirror_secrets_to_env()
 
     try:
         registry = load_registry(REGISTRY_PATH)
@@ -51,21 +52,25 @@ def main() -> None:
         st.stop()
 
     if not BOOKINGS_PARQUET.exists():
-        st.warning(
-            "No synthetic dataset found. Run "
-            "`python -m src.cli.generate_data` from the project root, then refresh."
-        )
-        st.stop()
+        # Cloud has no shell — generate the synthetic dataset on first
+        # load instead of asking the user to run a CLI command. The
+        # parquet is gitignored (Constitution Principle II: never store
+        # derivations) so it's expected to be missing on a fresh deploy.
+        with st.spinner("Generating synthetic dataset (first-run)…"):
+            regenerate(registry)
 
     bookings = _load_bookings(str(BOOKINGS_PARQUET))
     max_week = max_iso_week(bookings)
 
     if not is_fee_distribution_consistent(bookings, registry):
-        st.warning(
-            "Synthetic dataset is stale relative to the current registry "
-            "(fee-model shape differs). Run `python -m src.cli.generate_data` "
-            "from the project root, then refresh this page."
-        )
+        # Stale dataset relative to the current registry — regenerate
+        # silently rather than telling the user to run a CLI command
+        # (Cloud-friendly).
+        with st.spinner("Regenerating dataset (fee model changed)…"):
+            regenerate(registry)
+            st.cache_data.clear()
+        bookings = _load_bookings(str(BOOKINGS_PARQUET))
+        max_week = max_iso_week(bookings)
 
     # Sidebar
     st.sidebar.title(APP_TITLE)
@@ -313,6 +318,32 @@ section[data-testid="stSidebar"] button {
 
 def _inject_polish_css() -> None:
     st.markdown(_POLISH_CSS, unsafe_allow_html=True)
+
+
+def _mirror_secrets_to_env() -> None:
+    """Make LLM API keys available to engine code via ``os.environ``.
+
+    Streamlit Community Cloud has no shell env vars — the user puts keys
+    into the secrets manager, exposed via ``st.secrets``. Engine modules
+    (``src/engine/briefing.py``) live below the UI layer and cannot import
+    ``streamlit`` (layer-boundary rule), so we mirror known keys from
+    ``st.secrets`` into ``os.environ`` at app startup. Locally the env
+    vars are already there and we leave them alone.
+
+    Safe when no ``secrets.toml`` exists — ``st.secrets`` raises on first
+    access; we swallow that single boundary call.
+    """
+    for key_var in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
+        if os.environ.get(key_var):
+            continue  # local env already populates it; do not override
+        try:
+            val = st.secrets.get(key_var)
+        except Exception:
+            # No secrets.toml — nothing to mirror. Engine path will keep
+            # falling back to template as designed.
+            return
+        if val:
+            os.environ[key_var] = str(val)
 
 
 def _run_export_inproc(
