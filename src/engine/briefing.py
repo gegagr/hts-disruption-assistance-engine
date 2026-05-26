@@ -369,6 +369,56 @@ def pack_event_label(pack: BriefingEvidencePack, event_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Reference catalogue — the exact set of {ref:...} ids the renderer can
+# resolve for a given pack. Sent to the LLM verbatim so it stops guessing
+# (Gemini, in particular, paraphrases ids without this guide).
+# ---------------------------------------------------------------------------
+
+# Top-level pack fields that aren't single-value (collections) shouldn't be
+# addressable as {ref:blended.<...>} — exclude from the catalogue.
+_BLENDED_NON_SCALAR_FIELDS = frozenset({"partners", "events", "floors"})
+
+
+def build_ref_catalogue(pack: BriefingEvidencePack) -> str:
+    """Return a human-readable list of every {ref:<id>} token the renderer
+    will accept for *pack*. Used as a hard constraint in the LLM user
+    message; the LLM is told ids outside this list will be dropped."""
+    lines: list[str] = [
+        "VALID REFERENCE IDS (use ONLY these tokens verbatim inside "
+        "{ref:...}; any other id will cause the renderer to DROP the entire "
+        "callout):",
+    ]
+    if pack.partners:
+        lines.append("")
+        lines.append("Partner fields — format {ref:partner.<partner_id>.<field>}:")
+        partner_fields = list(PartnerEvidence.model_fields.keys())
+        for p in pack.partners:
+            for field in partner_fields:
+                lines.append(f"  partner.{p.partner_id}.{field}")
+    if pack.events:
+        lines.append("")
+        lines.append("Event fields — format {ref:event.<event_id>.<field>}:")
+        event_fields = list(EventEvidence.model_fields.keys())
+        for ev in pack.events:
+            for field in event_fields:
+                lines.append(f"  event.{ev.event_id}.{field}")
+    if pack.floors:
+        lines.append("")
+        lines.append("Floor fields — format {ref:floor.<partner_id>.<field>}:")
+        floor_fields = list(FloorEvidence.model_fields.keys())
+        for fl in pack.floors:
+            for field in floor_fields:
+                lines.append(f"  floor.{fl.partner_id}.{field}")
+    lines.append("")
+    lines.append("Blended-book scalars — format {ref:blended.<field>}:")
+    for field in BriefingEvidencePack.model_fields:
+        if field in _BLENDED_NON_SCALAR_FIELDS:
+            continue
+        lines.append(f"  blended.{field}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # LLM renderer — dispatched by registry.briefing.provider
 # ---------------------------------------------------------------------------
 
@@ -413,6 +463,7 @@ def _render_anthropic(
 
     client = Anthropic(api_key=api_key)
     pack_json = json.dumps(pack.model_dump(mode="json"), sort_keys=True)
+    catalogue = build_ref_catalogue(pack)
     try:
         message = client.messages.create(
             model=registry.briefing.llm_model.value,
@@ -428,6 +479,7 @@ def _render_anthropic(
                 {
                     "role": "user",
                     "content": [
+                        {"type": "text", "text": catalogue},
                         {"type": "text", "text": "EVIDENCE:"},
                         {
                             "type": "text",
@@ -469,13 +521,29 @@ def _render_openrouter(
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
 
+    # Gemini cold-starts through OpenRouter routinely take 12-25s; the
+    # registry's 10s default is too tight and produces intermittent
+    # timeout-driven fallbacks. Clamp the floor for this transport so a
+    # working call doesn't get cut off, without forcing every operator to
+    # edit the registry.
+    timeout_s = max(
+        float(registry.briefing.llm_timeout_s.value),
+        30.0,  # allow: literal — transport-floor seconds, not a model input
+    )
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
-        timeout=registry.briefing.llm_timeout_s.value,
+        timeout=timeout_s,
     )
     pack_json = json.dumps(pack.model_dump(mode="json"), sort_keys=True)
+    catalogue = build_ref_catalogue(pack)
     try:
+        # NOTE: do NOT pass response_format={"type": "json_object"} here.
+        # OpenRouter forwards that parameter to the upstream provider, and
+        # several (Gemini included) reject it with HTTP 400 — which is the
+        # root cause this path was silently swallowing. The system prompt
+        # already requires a JSON object and `_parse_narrative` strips
+        # markdown code fences if the model emits one.
         response = client.chat.completions.create(
             model=registry.briefing.openrouter_model.value,
             max_tokens=2000,  # allow: literal — SDK token budget, not a model input
@@ -484,13 +552,15 @@ def _render_openrouter(
                 {
                     "role": "user",
                     "content": (
-                        "EVIDENCE:\n"
+                        catalogue
+                        + "\n\nEVIDENCE:\n"
                         + pack_json
-                        + "\n\nProduce one BriefingNarrative JSON object."
+                        + "\n\nProduce one BriefingNarrative JSON object. "
+                        "Respond with the JSON object only — no prose, no "
+                        "markdown fence."
                     ),
                 },
             ],
-            response_format={"type": "json_object"},
         )
     except Exception as exc:
         raise RuntimeError(f"OpenRouter call failed: {exc}") from exc
@@ -500,31 +570,77 @@ def _render_openrouter(
 
 
 def _parse_narrative(text: str, *, source: str) -> BriefingNarrative:
-    """Strip code fences, parse JSON, validate as a BriefingNarrative.
+    """Extract the first JSON object, parse it, validate as BriefingNarrative.
 
     Shared between every LLM transport — output schema is provider-agnostic.
+    Tolerates: bare JSON, fenced ``` / ```json blocks (with or without
+    surrounding newlines), and short conversational preambles ("Here is the
+    JSON:\n{...}"). The first balanced ``{ ... }`` substring is parsed.
     """
-    cleaned = _strip_code_fence(text)
+    cleaned = _extract_json_object(text)
     try:
         parsed: dict[str, Any] = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"{source} output is not valid JSON: {exc}") from exc
-    parsed["mode"] = "llm"
+        raise RuntimeError(
+            f"{source} output is not valid JSON: {exc}. "
+            f"First 200 chars: {text[:200]!r}"  # allow: literal — log truncation
+        ) from exc
+    # Some providers (Gemini in particular) occasionally add stray top-level
+    # keys like "schema", "summary", or echo the user prompt back. Filter
+    # to known fields at the boundary so a transient drift doesn't trigger
+    # a silent template fallback. The engine model keeps extra="forbid".
+    allowed = set(BriefingNarrative.model_fields.keys())
+    filtered = {k: v for k, v in parsed.items() if k in allowed}
+    dropped = sorted(set(parsed) - allowed)
+    if dropped:
+        log.warning(
+            "%s output had extra top-level keys %s — filtered out.", source, dropped
+        )
+    filtered["mode"] = "llm"
     try:
-        return BriefingNarrative.model_validate(parsed)
+        return BriefingNarrative.model_validate(filtered)
     except ValidationError as exc:
         raise RuntimeError(
             f"{source} output failed BriefingNarrative schema validation: {exc}"
         ) from exc
 
 
-def _strip_code_fence(s: str) -> str:
+def _extract_json_object(s: str) -> str:
+    """Return the first balanced ``{...}`` substring of *s* (or *s* unchanged
+    if there isn't one). Handles fenced blocks and preambles without forcing
+    a rigid regex on the surrounding shape."""
     s = s.strip()
+    # Strip a leading ```json / ``` fence and any trailing fence wherever
+    # they appear (no newline assumptions).
     if s.startswith("```"):
-        # remove leading ```json\n or ```\n and trailing ```
-        s = re.sub(r"^```(?:json)?\n", "", s)
-        s = re.sub(r"\n```$", "", s)
-    return s.strip()
+        s = re.sub(r"^```(?:json|JSON)?\s*", "", s)
+        s = re.sub(r"\s*```\s*$", "", s)
+    start = s.find("{")
+    if start == -1:
+        return s.strip()
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    # Unbalanced — return what we have so json.loads raises a clear error.
+    return s[start:].strip()
 
 
 # ---------------------------------------------------------------------------
@@ -567,13 +683,26 @@ def _ref_value(pack: BriefingEvidencePack, ref_id: str) -> int | str | None:
                 raise KeyError(ref_id)
     if root == "blended":
         field = ".".join(parts[1:])
+        # Refuse the list-valued top-level fields — they would dump a
+        # raw repr into the briefing. Only scalars are addressable here.
+        if field in _BLENDED_NON_SCALAR_FIELDS:
+            raise KeyError(ref_id)
         if hasattr(pack, field):
             return _coerce(getattr(pack, field))
     raise KeyError(ref_id)
 
 
 def render(narrative: BriefingNarrative, pack: BriefingEvidencePack) -> str:
-    """Substitute `{ref:<id>}` tokens with formatted values from *pack*."""
+    """Substitute ``{ref:<id>}`` tokens with formatted values from *pack*.
+
+    Headline is strict — a digit or unresolved ref still raises (the
+    deterministic guarantee that LLMs never emit fabricated numbers in the
+    headline survives). Per-callout substitution is *tolerant*: if a
+    callout's template references an id not in the pack, the entire
+    callout is DROPPED with a warning, and the rest of the briefing
+    renders. This stops one stray Gemini-invented id from nuking the
+    whole narrative and forcing a template fallback.
+    """
     if any(ch.isdigit() for ch in narrative.headline_sentence):
         raise ValueError(
             f"Briefing headline must be number-free: {narrative.headline_sentence!r}"
@@ -584,16 +713,52 @@ def render(narrative: BriefingNarrative, pack: BriefingEvidencePack) -> str:
         )
 
     lines = [narrative.headline_sentence]
-    for partner_callout in narrative.partner_callouts:
-        lines.append("• " + _substitute(partner_callout.text_template, pack))
-    for event_callout in narrative.event_callouts:
-        lines.append("• " + _substitute(event_callout.text_template, pack))
-    for floor_callout in narrative.floor_callouts:
-        lines.append("⚠ " + _substitute(floor_callout.text_template, pack))
-    return "\n".join(lines)
+
+    def _append_callout(prefix: str, template: str, kind: str, owner_id: str) -> None:
+        rendered = _try_substitute(template, pack)
+        if rendered is None:
+            log.warning(
+                "Briefing: dropped %s callout for %s — template contained an "
+                "unknown {ref:...} id (template=%r).",
+                kind,
+                owner_id,
+                template,
+            )
+            return
+        lines.append(prefix + rendered)
+
+    for pc in narrative.partner_callouts:
+        _append_callout("• ", pc.text_template, "partner", pc.partner_id)
+    for ec in narrative.event_callouts:
+        _append_callout("• ", ec.text_template, "event", ec.event_id)
+    for fc in narrative.floor_callouts:
+        _append_callout("⚠ ", fc.text_template, "floor", fc.partner_id)
+
+    # Belt-and-braces: a {ref:...} token in user-facing output is a bug.
+    # If anything slipped past _try_substitute (defensive against future
+    # changes), drop the offending line outright and log it — the user
+    # never sees template scaffolding.
+    clean: list[str] = []
+    for ln in lines:
+        if REF_PATTERN.search(ln):
+            log.warning(
+                "Briefing: dropped a rendered line that still contained "
+                "an unresolved {ref:...} token (line=%r). This is a bug — "
+                "_try_substitute should have caught it upstream.",
+                ln,
+            )
+            continue
+        clean.append(ln)
+    return "\n".join(clean)
 
 
-def _substitute(template: str, pack: BriefingEvidencePack) -> str:
+def _try_substitute(template: str, pack: BriefingEvidencePack) -> str | None:
+    """Substitute every ``{ref:<id>}`` in *template* using *pack*.
+
+    Returns the substituted string, or ``None`` if any ref is unknown —
+    the caller drops the line. None values within a known field resolve
+    to the literal ``"n/a"`` (a known field with no measurement is a
+    valid output; an unknown id is not)."""
     def repl(match: re.Match[str]) -> str:
         ref_id = match.group(1)
         value = _ref_value(pack, ref_id)
@@ -601,7 +766,10 @@ def _substitute(template: str, pack: BriefingEvidencePack) -> str:
             return "n/a"
         return f"{value:,}" if isinstance(value, int) else str(value)
 
-    return REF_PATTERN.sub(repl, template)
+    try:
+        return REF_PATTERN.sub(repl, template)
+    except KeyError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -631,17 +799,28 @@ def compute_briefing(
     """
     pack = build_evidence_pack(performance_view, registry)
     provider = registry.briefing.provider.value
+    registry_llm_enabled = registry.briefing.llm_enabled.value
 
-    if (
-        force_template
-        or provider == "template"
-        or not registry.briefing.llm_enabled.value
-    ):
+    # Single-line "why this branch" log so a reader never has to guess
+    # whether the toggle, the registry, the provider, or an exception
+    # decided template-vs-LLM. WARNING level so it shows by default.
+    if force_template:
+        log.warning("Briefing → template (force_template=True; toggle is off).")
+        return _template_briefing(pack)
+    if provider == "template":
+        log.warning("Briefing → template (registry.briefing.provider='template').")
+        return _template_briefing(pack)
+    if not registry_llm_enabled:
+        log.warning(
+            "Briefing → template (registry.briefing.llm_enabled=False kill switch)."
+        )
         return _template_briefing(pack)
 
+    log.warning("Briefing → LLM render via provider=%s.", provider)
     try:
         narrative = render_llm(pack, registry)
         rendered = render(narrative, pack)  # raises on unknown ref / digit headline
+        log.warning("Briefing → LLM render via %s SUCCEEDED.", provider)
         return Briefing(
             mode="llm",
             provider=provider,  # "anthropic" | "openrouter"
@@ -650,10 +829,15 @@ def compute_briefing(
             rendered_text=rendered,
         )
     except (RuntimeError, ValueError, KeyError) as exc:
-        log.info(
-            "Briefing render via %s failed (%s); falling back to template.",
+        # WARNING (not INFO) so the real exception is visible in the
+        # terminal without bespoke logging config — silent fallback was
+        # masking root causes (e.g. provider-incompatible response_format).
+        log.warning(
+            "Briefing → template (LLM render via %s raised %s: %s).",
             provider,
+            type(exc).__name__,
             exc,
+            exc_info=True,
         )
         return _template_briefing(pack)
 

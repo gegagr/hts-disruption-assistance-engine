@@ -78,17 +78,44 @@ def main() -> None:
         format_func=lambda w: format_week_commencing(w, start_date),
         help="Anchor week for current-week metrics.",
     )
-    llm_default = registry.briefing.llm_enabled.value and bool(
-        os.environ.get("ANTHROPIC_API_KEY")
+    # Toggle default looks at the env var the *configured provider* actually
+    # uses — otherwise a user with provider=openrouter + OPENROUTER_API_KEY
+    # set (but no Anthropic key) would silently boot with the toggle off and
+    # never trigger the LLM path. provider=template stays off either way.
+    configured_provider = registry.briefing.provider.value
+    provider_key_var = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }.get(configured_provider)
+    key_present = bool(provider_key_var and os.environ.get(provider_key_var))
+    llm_default = (
+        registry.briefing.llm_enabled.value
+        and configured_provider != "template"
+        and key_present
     )
     llm_enabled = st.sidebar.toggle(
         "LLM briefing",
         value=llm_default,
         help=(
-            "Off ⇒ deterministic template fallback. "
-            "On requires ANTHROPIC_API_KEY in the environment."
+            f"On ⇒ call {configured_provider} for the briefing. "
+            f"Off ⇒ deterministic template. "
+            + (
+                f"On requires {provider_key_var} in the environment "
+                f"({'present' if key_present else 'MISSING'})."
+                if provider_key_var
+                else "Set briefing.provider in registry.yaml to use an LLM."
+            )
         ),
     )
+    # Surface the state plainly so a reader knows what the app *sees* without
+    # having to hover the tooltip or read the terminal.
+    if provider_key_var:
+        st.sidebar.caption(
+            f"Provider: `{configured_provider}` · {provider_key_var}: "
+            f"{'✓ present' if key_present else '✗ missing'}"
+        )
+    else:
+        st.sidebar.caption(f"Provider: `{configured_provider}` (no LLM call)")
 
     if st.sidebar.button("Regenerate dataset"):
         regenerate(registry)
@@ -103,11 +130,19 @@ def main() -> None:
 
     # Engine
     registry_fp = _registry_hash(registry)
+    # The briefing cache MUST also be keyed on the env var the renderer will
+    # read, otherwise a stale template-fallback Briefing cached from a
+    # no-key run is served indefinitely after the user exports the key and
+    # only refreshes the page. We fingerprint presence (and a short prefix
+    # of the key), never the secret itself.
+    provider_key_fp = _provider_key_fingerprint(provider_key_var)
     pv = _compute_performance_cached(registry_fp, as_of_week, llm_enabled)
     vv = _compute_variance_cached(registry_fp, as_of_week)
     ab = _compute_ab_cached(registry_fp, as_of_week)
     pj = _compute_projection_cached(registry_fp, as_of_week)
-    briefing = _compute_briefing_cached(registry_fp, as_of_week, llm_enabled)
+    briefing = _compute_briefing_cached(
+        registry_fp, as_of_week, llm_enabled, provider_key_fp
+    )
 
     # Consistency check (FR-027) — fail-loud banner across all tabs
     consistency = _check_consistency_cached(registry_fp, as_of_week)
@@ -154,12 +189,29 @@ def _compute_performance_cached(
 
 @st.cache_data(show_spinner=False)
 def _compute_briefing_cached(
-    _registry_fingerprint: str, as_of_week: int, llm_enabled: bool
+    _registry_fingerprint: str,
+    as_of_week: int,
+    llm_enabled: bool,
+    _provider_key_fingerprint: str,
 ) -> Briefing:
     registry = load_registry(REGISTRY_PATH)
     bookings = _load_bookings(str(BOOKINGS_PARQUET))
     pv = compute_performance(registry, bookings, as_of_week=as_of_week)
     return compute_briefing(pv, registry, force_template=not llm_enabled)
+
+
+def _provider_key_fingerprint(provider_key_var: str | None) -> str:
+    """Short, secret-free fingerprint of the LLM API key. Goes into the
+    briefing cache key so changing the env between reruns busts the cache —
+    never the key itself, never to disk."""
+    if not provider_key_var:
+        return "no-provider"
+    val = os.environ.get(provider_key_var) or ""
+    if not val:
+        return "key:absent"
+    # First 4 chars (e.g. "sk-o") + length — distinguishes presence /
+    # rotation without ever logging the secret.
+    return f"key:{val[:4]}.{len(val)}"
 
 
 @st.cache_data(show_spinner=False)
