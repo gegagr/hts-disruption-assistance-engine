@@ -801,26 +801,26 @@ def compute_briefing(
     provider = registry.briefing.provider.value
     registry_llm_enabled = registry.briefing.llm_enabled.value
 
-    # Single-line "why this branch" log so a reader never has to guess
-    # whether the toggle, the registry, the provider, or an exception
-    # decided template-vs-LLM. WARNING level so it shows by default.
+    # Template is the standard view — falling back to it is NORMAL operation,
+    # not an error. The "why-this-branch" hint is kept at DEBUG so it's
+    # available with `--log-level debug` but doesn't clutter the default
+    # terminal. The only WARNING is a *failed* LLM render attempt, which is
+    # a real signal worth seeing.
     if force_template:
-        log.warning("Briefing → template (force_template=True; toggle is off).")
+        log.debug("Briefing → template (force_template=True; toggle off).")
         return _template_briefing(pack)
     if provider == "template":
-        log.warning("Briefing → template (registry.briefing.provider='template').")
+        log.debug("Briefing → template (registry.briefing.provider='template').")
         return _template_briefing(pack)
     if not registry_llm_enabled:
-        log.warning(
-            "Briefing → template (registry.briefing.llm_enabled=False kill switch)."
-        )
+        log.debug("Briefing → template (registry.briefing.llm_enabled=False).")
         return _template_briefing(pack)
 
-    log.warning("Briefing → LLM render via provider=%s.", provider)
+    log.info("Briefing → LLM render via provider=%s.", provider)
     try:
         narrative = render_llm(pack, registry)
         rendered = render(narrative, pack)  # raises on unknown ref / digit headline
-        log.warning("Briefing → LLM render via %s SUCCEEDED.", provider)
+        log.info("Briefing → LLM render via %s succeeded.", provider)
         return Briefing(
             mode="llm",
             provider=provider,  # "anthropic" | "openrouter"
@@ -829,15 +829,14 @@ def compute_briefing(
             rendered_text=rendered,
         )
     except (RuntimeError, ValueError, KeyError) as exc:
-        # WARNING (not INFO) so the real exception is visible in the
-        # terminal without bespoke logging config — silent fallback was
-        # masking root causes (e.g. provider-incompatible response_format).
+        # One concise line — no traceback (a fallback is not a crash).
+        # Surfaces in the terminal at WARNING level so the operator sees
+        # which provider/why on the way to the deterministic briefing.
         log.warning(
-            "Briefing → template (LLM render via %s raised %s: %s).",
+            "Briefing fallback: %s render raised %s: %s",
             provider,
             type(exc).__name__,
             exc,
-            exc_info=True,
         )
         return _template_briefing(pack)
 

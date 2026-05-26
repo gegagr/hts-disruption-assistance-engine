@@ -78,55 +78,44 @@ def main() -> None:
         format_func=lambda w: format_week_commencing(w, start_date),
         help="Anchor week for current-week metrics.",
     )
-    # Toggle default looks at the env var the *configured provider* actually
-    # uses — otherwise a user with provider=openrouter + OPENROUTER_API_KEY
-    # set (but no Anthropic key) would silently boot with the toggle off and
-    # never trigger the LLM path. provider=template stays off either way.
+    # The standard view is the deterministic template briefing. The LLM
+    # path is experimental — opt-in, defaults off, and only available when
+    # the configured provider has its API key in the environment.
     configured_provider = registry.briefing.provider.value
     provider_key_var = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
     }.get(configured_provider)
     key_present = bool(provider_key_var and os.environ.get(provider_key_var))
-    llm_default = (
-        registry.briefing.llm_enabled.value
-        and configured_provider != "template"
-        and key_present
-    )
     llm_enabled = st.sidebar.toggle(
-        "LLM briefing",
-        value=llm_default,
+        "LLM briefing (experimental)",
+        value=False,  # always default off — template is the standard view
         help=(
-            f"On ⇒ call {configured_provider} for the briefing. "
-            f"Off ⇒ deterministic template. "
+            "Optional AI-written narrative over the same evidence pack. "
+            "Off by default; the deterministic briefing is the standard view. "
             + (
-                f"On requires {provider_key_var} in the environment "
+                f"Requires provider `{configured_provider}` (set in registry) "
+                f"and {provider_key_var} in the environment "
                 f"({'present' if key_present else 'MISSING'})."
                 if provider_key_var
-                else "Set briefing.provider in registry.yaml to use an LLM."
+                else "Set briefing.provider in registry.yaml to an LLM "
+                "provider (anthropic / openrouter) to enable this."
             )
         ),
+        disabled=(provider_key_var is None or not key_present),
     )
-    # Surface the state plainly so a reader knows what the app *sees* without
-    # having to hover the tooltip or read the terminal.
+    # Show provider state only when a non-template provider is configured —
+    # otherwise the caption is noise.
     if provider_key_var:
         st.sidebar.caption(
             f"Provider: `{configured_provider}` · {provider_key_var}: "
             f"{'✓ present' if key_present else '✗ missing'}"
         )
-    else:
-        st.sidebar.caption(f"Provider: `{configured_provider}` (no LLM call)")
 
     if st.sidebar.button("Regenerate dataset"):
         regenerate(registry)
         st.cache_data.clear()
         st.rerun()
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Export current view set**")
-    if st.sidebar.button("Build XLSX + HTML + PDF"):
-        _run_export(as_of_week=as_of_week, llm_enabled=llm_enabled)
-    _render_download_links()
 
     # Engine
     registry_fp = _registry_hash(registry)
@@ -146,6 +135,24 @@ def main() -> None:
 
     # Consistency check (FR-027) — fail-loud banner across all tabs
     consistency = _check_consistency_cached(registry_fp, as_of_week)
+
+    # Export block lives AFTER the views are cached so the build button can
+    # hand the writers the SAME Briefing the user is reading on screen — no
+    # subprocess, no LLM re-call, no badge mismatch between app and PDF.
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Export current view set**")
+    if st.sidebar.button("Build XLSX + HTML + PDF"):
+        _run_export_inproc(
+            registry=registry,
+            performance=pv,
+            variance=vv,
+            ab_test=ab,
+            projection=pj,
+            briefing=briefing,
+            consistency=consistency,
+            as_of_week=as_of_week,
+        )
+    _render_download_links()
     if not consistency.passed:
         _render_consistency_banner(consistency)
 
@@ -308,34 +315,73 @@ def _inject_polish_css() -> None:
     st.markdown(_POLISH_CSS, unsafe_allow_html=True)
 
 
-def _run_export(*, as_of_week: int, llm_enabled: bool) -> None:
-    """Trigger the export CLI programmatically — XLSX + HTML + PDF."""
-    from src.cli.export import main as cli_main
+def _run_export_inproc(
+    *,
+    registry,
+    performance,
+    variance,
+    ab_test,
+    projection,
+    briefing,
+    consistency,
+    as_of_week: int,
+) -> None:
+    """Write XLSX + HTML + PDF using the SAME Briefing currently on screen.
+
+    Avoids the CLI subprocess so the export inherits the live (cached)
+    briefing — the downloaded artefacts carry the same provider badge the
+    user is reading. Consistency-failed runs are surfaced as a sidebar
+    error and no files are written, mirroring the CLI's exit code 2.
+    """
+    from datetime import timedelta
+
+    from src.engine.dataset import load_bookings
+    from src.export import html_report as html_mod
+    from src.export import xlsx as xlsx_mod
+
+    if not consistency.passed:
+        st.sidebar.error("Consistency check failed — no artefacts written.")
+        return
 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    argv = [
-        "--xlsx",
-        "--html",
-        "--pdf",
-        "--as-of-week",
-        str(as_of_week),
-        "--out",
-        str(EXPORT_DIR),
-    ]
-    if not llm_enabled:
-        argv.append("--no-llm")
+    start_date = registry.dataset.start_date.value
+    week_monday = start_date + timedelta(days=as_of_week * 7)
+    label = f"DA_Report_w{as_of_week:03d}_{week_monday.isoformat()}"
+
+    bookings = load_bookings()
+
     try:
-        rc = cli_main(argv)
+        xlsx_mod.write_workbook(
+            registry=registry,
+            bookings_df=bookings,
+            performance=performance,
+            variance=variance,
+            ab_test=ab_test,
+            projection=projection,
+            briefing=briefing,
+            consistency=consistency,
+            path=EXPORT_DIR / f"{label}.xlsx",
+        )
+        html_path = EXPORT_DIR / f"{label}.html"
+        html_mod.write_report(
+            performance=performance,
+            variance=variance,
+            ab_test=ab_test,
+            projection=projection,
+            briefing=briefing,
+            consistency=consistency,
+            registry=registry,
+            path=html_path,
+        )
+        from src.export.pdf import write_pdf
+
+        write_pdf(html_path, EXPORT_DIR / f"{label}.pdf")
     except RuntimeError as exc:
-        # WeasyPrint native deps missing — fail loudly with the clear message.
+        # WeasyPrint native deps missing or render error — surface clearly.
         st.sidebar.error(str(exc))
         return
-    if rc == 0:
-        st.sidebar.success(f"Exported to {EXPORT_DIR}")
-    elif rc == 2:
-        st.sidebar.error("Consistency check failed — no artefacts written.")
-    else:
-        st.sidebar.error(f"Export failed (exit code {rc}).")
+
+    st.sidebar.success(f"Exported to {EXPORT_DIR}")
 
 
 def _render_download_links() -> None:

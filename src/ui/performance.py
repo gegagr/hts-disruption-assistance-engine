@@ -215,17 +215,19 @@ _COLUMN_X: dict[str, float] = {
 }
 
 # Right-side y order (top → bottom): Gross Contribution (profit), Customer
-# Payouts, Operating Costs. Profit on top so the green band hugs the top edge.
+# Payouts, Operating Costs — income-statement convention. The y values are
+# spaced widely so the bands have clear daylight between them on the canvas.
 _RIGHT_COLUMN_Y: dict[str, float] = {
-    "Gross Contribution": 0.10,
-    "Customer Payouts": 0.40,
-    "Operating Costs": 0.78,
+    "Gross Contribution": 0.06,
+    "Customer Payouts": 0.42,
+    "Operating Costs": 0.82,
 }
 
-# Far-right column — Servicing above Processing.
+# Far-right column — Servicing above Processing, with extra separation so
+# the small cost split at the bottom doesn't cramp.
 _DETAIL_COLUMN_Y: dict[str, float] = {
-    "Servicing": 0.70,
-    "Processing": 0.92,
+    "Servicing": 0.66,
+    "Processing": 0.96,
 }
 
 
@@ -248,11 +250,21 @@ def _render_pnl_flow(view: PerformanceView, registry: Registry) -> None:
 
     node_x, node_y = _pinned_positions(flow)
 
+    # Plotly draws link bands in the order they appear in the link arrays,
+    # and that order decides where each band attaches on the node face.
+    # Sort the engine's link list by (source_y, target_y) so every source
+    # node emits its outgoing bands top-down in the same order as the
+    # right-column stack — bands then run straight across without crossing.
+    ordered_links = sorted(
+        flow.links,
+        key=lambda lk: (node_y[lk.source], node_y[lk.target]),
+    )
+
     # Link bands take the target node's colour at 0.5 alpha — brighter than
     # before so the green contribution band is unmistakable on dark bg.
     link_colors = [
         _with_alpha(_CATEGORY_COLORS[flow.nodes[link.target].category], 0.5)
-        for link in flow.links
+        for link in ordered_links
     ]
 
     fig = go.Figure(
@@ -263,16 +275,16 @@ def _render_pnl_flow(view: PerformanceView, registry: Registry) -> None:
                 color=node_colors,
                 x=node_x,
                 y=node_y,
-                pad=22,
-                thickness=20,
+                pad=32,
+                thickness=22,
                 line=dict(color="rgba(255,255,255,0.18)", width=0.5),
                 customdata=node_customdata,
                 hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
             ),
             link=dict(
-                source=[link.source for link in flow.links],
-                target=[link.target for link in flow.links],
-                value=[link.value for link in flow.links],
+                source=[link.source for link in ordered_links],
+                target=[link.target for link in ordered_links],
+                value=[link.value for link in ordered_links],
                 color=link_colors,
                 hovertemplate=(
                     "%{source.label} → %{target.label}: "
@@ -285,11 +297,11 @@ def _render_pnl_flow(view: PerformanceView, registry: Registry) -> None:
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=520,
-        margin=dict(l=10, r=10, t=10, b=10),
+        height=680,
+        margin=dict(l=10, r=10, t=16, b=16),
         font=dict(size=13, color="#ECEDEE"),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _pinned_positions(flow: PnlFlow) -> tuple[list[float], list[float]]:

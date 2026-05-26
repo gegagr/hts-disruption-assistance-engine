@@ -252,7 +252,7 @@ def _render_monthly_trajectory(view: ProjectionView, registry: Registry) -> None
             x=1,
         ),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption(
         "Cumulative contribution by month, both fee scenarios. Revenue and "
         "payouts are recognised at booking (sale) week."

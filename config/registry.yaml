@@ -182,5 +182,5 @@ briefing:
   # Anthropic SDK (reads ANTHROPIC_API_KEY). "openrouter" → OpenAI-compatible
   # client pointed at OpenRouter (reads OPENROUTER_API_KEY). Failures of any
   # provider fall back to the deterministic template per the existing contract.
-  provider:        { value: "openrouter", origin: assumed }
+  provider:        { value: "template", origin: assumed }
   openrouter_model: { value: "google/gemini-2.0-flash-001", origin: assumed }

@@ -17,5 +17,6 @@ chartCategoricalColors = [
     "#E2B14F",  # warning
 ]
 chartSequentialColors = [
-    "#0F1A22", "#1F3445", "#2F4F68", "#406B8B", "#5188AF", "#62A4D2", "#7AB7DE", "#92C9EA",
+    "#0F1A22", "#1A2A36", "#243F52", "#2F546F", "#3B6989",
+    "#4781A7", "#5594C0", "#6FA8D2", "#8BBCE0", "#A8D0EB",
 ]

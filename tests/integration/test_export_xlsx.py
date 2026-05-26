@@ -121,6 +121,69 @@ def test_briefing_sheet_carries_mode_badge(workbook_path: Path) -> None:
     )
 
 
+def test_workbook_forces_full_calc_on_load(workbook_path: Path) -> None:
+    """openpyxl writes formulas without cached values; some viewers leave
+    cells blank until a manual recalc. fullCalcOnLoad makes Excel/Sheets/
+    preview compute the workbook on open."""
+    wb = load_workbook(workbook_path, data_only=False)
+    assert wb.calculation.fullCalcOnLoad is True
+
+
+def test_performance_currency_columns_use_euro_format(workbook_path: Path) -> None:
+    """Revenue/Payouts/CoS/Contribution must display as euros, not raw cents."""
+    wb = load_workbook(workbook_path, data_only=False)
+    ws = wb["Performance"]
+    # Header text changed to "(€)"
+    headers = [ws.cell(row=4, column=c).value for c in range(1, 11)]
+    assert "Revenue (€)" in headers
+    assert "Contribution (€)" in headers
+    assert not any("(cents)" in str(h or "") for h in headers)
+    # Number format on the first partner row's currency cells
+    for col_idx in (3, 4, 5, 6):
+        fmt = ws.cell(row=5, column=col_idx).number_format
+        assert "€" in fmt, (
+            f"Performance!{ws.cell(row=5, column=col_idx).coordinate} "
+            f"missing euro number format (got {fmt!r})"
+        )
+
+
+def test_performance_status_and_margin_distance_are_formulas(
+    workbook_path: Path,
+) -> None:
+    """Status + margin distance must be live formulas referencing the
+    Assumptions named ranges, not hardcoded literals."""
+    wb = load_workbook(workbook_path, data_only=False)
+    ws = wb["Performance"]
+    status_cell = ws.cell(row=5, column=2).value
+    distance_cell = ws.cell(row=5, column=10).value
+    assert isinstance(status_cell, str) and status_cell.startswith("=")
+    assert "margin_approaching_floor_buffer_bps" in status_cell
+    assert isinstance(distance_cell, str) and distance_cell.startswith("=")
+    assert "margin_floor_bps" in distance_cell
+
+
+def test_variance_uses_percent_and_pp_not_bps(workbook_path: Path) -> None:
+    """Variance sheet must match the app: % for rates, pp for gaps,
+    euros for monetary."""
+    wb = load_workbook(workbook_path, data_only=False)
+    ws = wb["Variance"]
+    headers = [ws.cell(row=4, column=c).value for c in range(1, 11)]
+    assert "Priced cancel rate" in headers
+    assert "Realised cancel rate" in headers
+    assert "Gap (pp)" in headers
+    assert "Avg fare (€)" in headers
+    assert "Margin impact (€)" in headers
+    # No stray "(bps)" / "(cents)" survivors
+    assert not any("(bps)" in str(h or "") for h in headers)
+    assert not any("(cents)" in str(h or "") for h in headers)
+    # Spot-check formats on row 5
+    assert ws.cell(row=5, column=3).number_format == "0.00%"
+    assert ws.cell(row=5, column=4).number_format == "0.00%"
+    assert "pp" in ws.cell(row=5, column=5).number_format
+    assert "€" in ws.cell(row=5, column=8).number_format
+    assert "€" in ws.cell(row=5, column=9).number_format
+
+
 def test_consistency_sheet_lists_checks(workbook_path: Path) -> None:
     wb = load_workbook(workbook_path, data_only=False)
     ws = wb["Consistency"]

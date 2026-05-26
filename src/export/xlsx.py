@@ -16,6 +16,7 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.workbook.properties import CalcProperties
 
 from src.config.schema import Registry
 from src.engine.ab_test import ABTestView
@@ -41,6 +42,13 @@ ORIGIN_FILL = {
 HEADER_FONT = Font(bold=True)
 HEADER_FILL = PatternFill("solid", fgColor="F0F0F0")
 
+# Excel number-format codes — centralised so the workbook is visually
+# consistent everywhere monetary / % / pp / bps values are written.
+FMT_EUR = '"€"#,##0.00;[Red]"-€"#,##0.00'
+FMT_PCT = "0.00%"
+FMT_PP = '+0.00" pp";-0.00" pp";"0 pp"'
+FMT_BPS = '+0" bps";-0" bps";"0 bps"'
+
 
 def write_workbook(
     *,
@@ -57,6 +65,11 @@ def write_workbook(
     """Write the workbook to *path*. Returns the resolved Path."""
     wb = Workbook()
     wb.remove(wb.active)  # drop default sheet
+    # openpyxl writes formulas but doesn't evaluate them. Some viewers
+    # (Excel preview, Google Sheets in import mode, Numbers) show blank
+    # cells until they recalc. fullCalcOnLoad forces the spreadsheet app
+    # to recompute every formula immediately on open.
+    wb.calculation = CalcProperties(fullCalcOnLoad=True)
 
     start_date = registry.dataset.start_date.value
     name_index = _write_assumptions(wb, registry)
@@ -324,8 +337,8 @@ def _write_performance(
 
     # Header row at row 4
     headers = [
-        "Partner", "Status", "Revenue (cents)", "Payouts (cents)",
-        "Cost of service (cents)", "Contribution (cents)", "Attach rate",
+        "Partner", "Status", "Revenue (€)", "Payouts (€)",
+        "Cost of service (€)", "Contribution (€)", "Attach rate",
         "Loss ratio", "Gross margin", "Margin distance from floor (bps)",
     ]
     for col, h in enumerate(headers, start=1):
@@ -354,10 +367,13 @@ def _write_performance(
             f'WeeklyAggregates!A:A, "{partner}", WeeklyAggregates!B:B, {week}), "")'
         )
 
-    def _sumifs(col_letter: str, week: int, partner: str) -> str:
+    def _sumifs_eur(col_letter: str, week: int, partner: str) -> str:
+        """SUMIFS over a raw-cents column on WeeklyAggregates, divided by
+        100 so the cell displays as euros under FMT_EUR."""
         return (
             f'=SUMIFS(WeeklyAggregates!{col_letter}:{col_letter}, '
-            f'WeeklyAggregates!A:A, "{partner}", WeeklyAggregates!B:B, {week})'
+            f'WeeklyAggregates!A:A, "{partner}", WeeklyAggregates!B:B, '
+            f'{week})/100'
         )
 
     week = performance.as_of_week
@@ -365,19 +381,47 @@ def _write_performance(
     for status in performance.partners:
         pid = status.partner_id
         ws.cell(row=row, column=1, value=status.display_name)
-        ws.cell(row=row, column=2, value=status.status)
-        ws.cell(row=row, column=3, value=_sumifs("H", week, pid))
-        ws.cell(row=row, column=4, value=_sumifs("I", week, pid))
-        ws.cell(row=row, column=5, value=_sumifs("J", week, pid))
-        ws.cell(row=row, column=6, value=_sumifs("K", week, pid))
-        ws.cell(row=row, column=7, value=_attach_formula(week, pid))
-        ws.cell(row=row, column=8, value=_loss_formula(week, pid))
-        ws.cell(row=row, column=9, value=_gm_formula(week, pid))
+        # Status — formula-driven via margin distance (col J) + the
+        # margin_floor / approaching_floor_buffer named ranges. Must
+        # recompute when Assumptions change, consistent with the live
+        # model. Engine-only states ("no_activity", "partial_window")
+        # aren't expressible in a row-level formula; ISNUMBER guards a
+        # no-activity row so we display "no data" rather than a #VALUE!
+        # cascade.
         ws.cell(
-            row=row, column=10,
-            value=f"=ROUND(I{row}/H{row}*10000,0) - margin_floor_bps "
-                  if False else status.margin_distance_from_floor_bps,
+            row=row, column=2,
+            value=(
+                f'=IF(ISNUMBER(J{row})=FALSE,"no data",'
+                f'IF(J{row}<0,"breach",'
+                f'IF(J{row}<=margin_approaching_floor_buffer_bps,"warning",'
+                f'"healthy")))'
+            ),
         )
+        # Currency columns — stored as cents/100 so FMT_EUR displays euros.
+        for col_idx, letter in ((3, "H"), (4, "I"), (5, "J"), (6, "K")):
+            cell = ws.cell(
+                row=row, column=col_idx,
+                value=_sumifs_eur(letter, week, pid),
+            )
+            cell.number_format = FMT_EUR
+        # Ratios — already produced as fractions by the existing formulas.
+        for col_idx, formula in (
+            (7, _attach_formula(week, pid)),
+            (8, _loss_formula(week, pid)),
+            (9, _gm_formula(week, pid)),
+        ):
+            cell = ws.cell(row=row, column=col_idx, value=formula)
+            cell.number_format = FMT_PCT
+        # Margin distance — live formula: (gross margin × 10000) − floor bps.
+        # Replaces the previously-hardcoded integer literal so an edit to
+        # margin_floor_bps on Assumptions propagates here too. IFERROR
+        # guards no-activity rows where I{row} returns "" from the loss /
+        # gm formulas.
+        cell = ws.cell(
+            row=row, column=10,
+            value=f'=IFERROR(ROUND(I{row}*10000,0)-margin_floor_bps,"")',
+        )
+        cell.number_format = FMT_BPS
         row += 1
 
     for i, _ in enumerate(headers, start=1):
@@ -397,14 +441,51 @@ def _write_variance(
     )
 
     headers = [
-        "Partner", "Route", "Priced (bps)", "Realised (bps)",
-        "Gap (bps)", "Ancillaries sold", "Ancillaries cancelled",
-        "Avg fare (cents)", "Margin impact (cents)", "Hidden in blended view",
+        "Partner", "Route", "Priced cancel rate", "Realised cancel rate",
+        "Gap (pp)", "Ancillaries sold", "Ancillaries cancelled",
+        "Avg fare (€)", "Margin impact (€)", "Hidden in blended view",
     ]
     for col, h in enumerate(headers, start=1):
         c = ws.cell(row=4, column=col, value=h)
         c.font = HEADER_FONT
         c.fill = HEADER_FILL
+
+    def _write_variance_row(r, row: int, partner_id: str) -> None:
+        """Write one variance row in fractions/euros (not bps/cents)."""
+        # Priced cancel rate — formula references the named range (a
+        # fraction, e.g. 0.0370). Displayed as a percentage.
+        ws.cell(
+            row=row, column=3,
+            value=f"=partner_{partner_id}_priced_cancel_rate",
+        ).number_format = FMT_PCT
+        # Realised — stored as fraction (engine value is bps, divide by 10000).
+        realised_pct = (
+            None
+            if r.realised_cancel_rate_bps is None
+            else r.realised_cancel_rate_bps / 10000
+        )
+        ws.cell(row=row, column=4, value=realised_pct).number_format = FMT_PCT
+        # Gap (pp) — formula in percentage points. Both C{row} and D{row}
+        # are fractions, so (D−C)*100 produces the pp value directly.
+        ws.cell(
+            row=row, column=5,
+            value=f"=(D{row}-C{row})*100",
+        ).number_format = FMT_PP
+        ws.cell(row=row, column=6, value=r.ancillaries_sold)
+        ws.cell(row=row, column=7, value=r.ancillaries_cancelled)
+        # Avg fare — stored as euros (cents/100) with euro format.
+        ws.cell(
+            row=row, column=8, value=r.avg_fare_cents / 100,
+        ).number_format = FMT_EUR
+        # Margin impact: (priced − realised) × coverage_pct × avg_fare × sold.
+        # All inputs are now in consistent units (fractions for C/D, euros
+        # for H), so the formula yields euros directly. Sign convention
+        # preserved: realised > priced → margin impact negative.
+        ws.cell(
+            row=row, column=9,
+            value=f"=ROUND((C{row}-D{row})*coverage_pct*H{row}*F{row},2)",
+        ).number_format = FMT_EUR
+        ws.cell(row=row, column=10, value="yes" if r.hidden_by_blend else "")
 
     row = 5
     for r in variance.rows:
@@ -412,31 +493,7 @@ def _write_variance(
         if r.partner_id == "_blended_":
             ws.cell(row=row, column=1).font = Font(bold=True)
         ws.cell(row=row, column=2, value=r.route_type or "ALL")
-        # Priced bps references the registry-named cell when partner-level
-        if r.partner_id not in ("_blended_",) and r.route_type is None:
-            ws.cell(
-                row=row,
-                column=3,
-                value=f"=partner_{r.partner_id}_priced_cancel_rate*10000",
-            )
-        else:
-            ws.cell(row=row, column=3, value=r.priced_cancel_rate_bps)
-        ws.cell(row=row, column=4, value=r.realised_cancel_rate_bps)
-        ws.cell(
-            row=row,
-            column=5,
-            value=f"=D{row}-C{row}",
-        )
-        ws.cell(row=row, column=6, value=r.ancillaries_sold)
-        ws.cell(row=row, column=7, value=r.ancillaries_cancelled)
-        ws.cell(row=row, column=8, value=r.avg_fare_cents)
-        # Margin impact: (priced - realised) × coverage_pct × avg_fare × sold, cents
-        ws.cell(
-            row=row,
-            column=9,
-            value=f"=ROUND((C{row}/10000 - D{row}/10000)*coverage_pct*H{row}*F{row}, 0)",
-        )
-        ws.cell(row=row, column=10, value="yes" if r.hidden_by_blend else "")
+        _write_variance_row(r, row, r.partner_id)
         row += 1
 
     # Drilldown rows
@@ -450,22 +507,7 @@ def _write_variance(
             partner_only = r.display_name.split(" — ", 1)[0]
             ws.cell(row=row, column=1, value=partner_only)
             ws.cell(row=row, column=2, value=r.route_type or "ALL")
-            ws.cell(
-                row=row,
-                column=3,
-                value=f"=partner_{partner_id}_priced_cancel_rate*10000",
-            )
-            ws.cell(row=row, column=4, value=r.realised_cancel_rate_bps)
-            ws.cell(row=row, column=5, value=f"=D{row}-C{row}")
-            ws.cell(row=row, column=6, value=r.ancillaries_sold)
-            ws.cell(row=row, column=7, value=r.ancillaries_cancelled)
-            ws.cell(row=row, column=8, value=r.avg_fare_cents)
-            ws.cell(
-                row=row,
-                column=9,
-                value=f"=ROUND((C{row}/10000 - D{row}/10000)*coverage_pct*H{row}*F{row}, 0)",
-            )
-            ws.cell(row=row, column=10, value="yes" if r.hidden_by_blend else "")
+            _write_variance_row(r, row, partner_id)
             row += 1
 
     for i, _ in enumerate(headers, start=1):
@@ -510,11 +552,21 @@ def _write_ab_test(
     row = 9
     for m in ab.metrics:
         ws.cell(row=row, column=1, value=_metric_label(m.metric))
-        ws.cell(row=row, column=2, value=m.naive["control"])
-        ws.cell(row=row, column=3, value=m.naive["test"])
-        ws.cell(row=row, column=4, value=m.stratified["control"])
-        ws.cell(row=row, column=5, value=m.stratified["test"])
-        ws.cell(row=row, column=6, value=f"=E{row}-D{row}")
+        # contribution_per_booking is in cents → display as euros; the
+        # other three metrics (attach_rate, loss_ratio, gross_margin_pct)
+        # are fractions → display as percentages.
+        is_eur = m.metric == "contribution_per_booking_cents"
+        scale = (lambda v: v / 100) if is_eur else (lambda v: v)
+        fmt = FMT_EUR if is_eur else FMT_PCT
+        for col_idx, key in ((2, "naive"), (3, "naive"), (4, "stratified"), (5, "stratified")):
+            arm = "control" if col_idx in (2, 4) else "test"
+            cell = ws.cell(
+                row=row, column=col_idx,
+                value=scale(getattr(m, key)[arm]),
+            )
+            cell.number_format = fmt
+        delta = ws.cell(row=row, column=6, value=f"=E{row}-D{row}")
+        delta.number_format = fmt
         ws.cell(row=row, column=7, value=_scenario_name(m.winning_arm))
         row += 1
 
@@ -535,11 +587,19 @@ def _write_ab_test(
         value=_scenario_name(ab.verdict.winner_on_total_contribution),
     )
     row += 1
-    ws.cell(row=row, column=1, value=f"Total contribution — {ctl_label} (cents)")
-    ws.cell(row=row, column=2, value=ab.verdict.total_contribution_cents["control"])
+    ws.cell(row=row, column=1, value=f"Total contribution — {ctl_label} (€)")
+    cell = ws.cell(
+        row=row, column=2,
+        value=ab.verdict.total_contribution_cents["control"] / 100,
+    )
+    cell.number_format = FMT_EUR
     row += 1
-    ws.cell(row=row, column=1, value=f"Total contribution — {tst_label} (cents)")
-    ws.cell(row=row, column=2, value=ab.verdict.total_contribution_cents["test"])
+    ws.cell(row=row, column=1, value=f"Total contribution — {tst_label} (€)")
+    cell = ws.cell(
+        row=row, column=2,
+        value=ab.verdict.total_contribution_cents["test"] / 100,
+    )
+    cell.number_format = FMT_EUR
     row += 2
     ws.cell(row=row, column=1, value="Trade-off").font = Font(bold=True)
     row += 1
@@ -584,8 +644,8 @@ def _write_projection(
     row += 1
     week_headers = [
         "Scenario", "Week offset", "Week commencing", "Volume", "Ancillaries",
-        "Revenue (cents)", "Payouts (cents)", "Cost of service (cents)",
-        "Contribution (cents)",
+        "Revenue (€)", "Payouts (€)", "Cost of service (€)",
+        "Contribution (€)",
     ]
     for col, h in enumerate(week_headers, start=1):
         c = ws.cell(row=row, column=col, value=h)
@@ -605,13 +665,17 @@ def _write_projection(
         )
         ws.cell(row=row, column=4, value=w.volume)
         ws.cell(row=row, column=5, value=w.ancillaries)
-        ws.cell(row=row, column=6, value=w.revenue_cents)
-        ws.cell(row=row, column=7, value=w.payouts_cents)
-        ws.cell(row=row, column=8, value=w.cost_of_service_cents)
-        ws.cell(row=row, column=9, value=w.contribution_cents)
+        for col_idx, cents in (
+            (6, w.revenue_cents),
+            (7, w.payouts_cents),
+            (8, w.cost_of_service_cents),
+            (9, w.contribution_cents),
+        ):
+            cell = ws.cell(row=row, column=col_idx, value=cents / 100)
+            cell.number_format = FMT_EUR
         row += 1
 
-    # Totals — formula-based per scenario
+    # Totals — per scenario
     row += 1
     ws.cell(row=row, column=1, value="Totals (52w)").font = Font(bold=True)
     row += 1
@@ -622,10 +686,14 @@ def _write_projection(
         )
         ws.cell(row=row, column=4, value=t.volume)
         ws.cell(row=row, column=5, value=t.ancillaries)
-        ws.cell(row=row, column=6, value=t.revenue_cents)
-        ws.cell(row=row, column=7, value=t.payouts_cents)
-        ws.cell(row=row, column=8, value=t.cost_of_service_cents)
-        ws.cell(row=row, column=9, value=t.contribution_cents)
+        for col_idx, cents in (
+            (6, t.revenue_cents),
+            (7, t.payouts_cents),
+            (8, t.cost_of_service_cents),
+            (9, t.contribution_cents),
+        ):
+            cell = ws.cell(row=row, column=col_idx, value=cents / 100)
+            cell.number_format = FMT_EUR
         row += 1
 
     for col, _ in enumerate(week_headers, start=1):
@@ -736,10 +804,10 @@ def _write_audit(wb: Workbook, performance: PerformanceView) -> None:
     ws.row_dimensions[2].height = 60
 
     headers = [
-        "Partner", "Revenue (= SUMIFS H)",
-        "Payouts (= SUMIFS I)",
-        "Cost of service (= SUMIFS J)",
-        "Contribution (= revenue − payouts − cost)",
+        "Partner", "Revenue (€)",
+        "Payouts (€)",
+        "Cost of service (€)",
+        "Contribution (€) — revenue − payouts − cost",
         "Equals Performance figure?",
     ]
     for col, h in enumerate(headers, start=1):
@@ -747,37 +815,36 @@ def _write_audit(wb: Workbook, performance: PerformanceView) -> None:
         c.font = HEADER_FONT
         c.fill = HEADER_FILL
 
+    def _sumifs_eur_audit(col_letter: str, week_: int, partner: str) -> str:
+        """Same /100 convention as the Performance sheet so both sides of
+        the audit IF live in euros, keeping the reconciliation valid."""
+        return (
+            f'=SUMIFS(WeeklyAggregates!{col_letter}:{col_letter}, '
+            f'WeeklyAggregates!A:A, "{partner}", WeeklyAggregates!B:B, '
+            f'{week_})/100'
+        )
+
     week = performance.as_of_week
     row = 5
     for status in performance.partners:
         pid = status.partner_id
         ws.cell(row=row, column=1, value=status.display_name)
-        ws.cell(
-            row=row, column=2,
-            value=(
-                f'=SUMIFS(WeeklyAggregates!H:H, WeeklyAggregates!A:A, "{pid}", '
-                f'WeeklyAggregates!B:B, {week})'
-            ),
-        )
-        ws.cell(
-            row=row, column=3,
-            value=(
-                f'=SUMIFS(WeeklyAggregates!I:I, WeeklyAggregates!A:A, "{pid}", '
-                f'WeeklyAggregates!B:B, {week})'
-            ),
-        )
-        ws.cell(
-            row=row, column=4,
-            value=(
-                f'=SUMIFS(WeeklyAggregates!J:J, WeeklyAggregates!A:A, "{pid}", '
-                f'WeeklyAggregates!B:B, {week})'
-            ),
-        )
-        ws.cell(row=row, column=5, value=f"=B{row}-C{row}-D{row}")
-        # Performance cell on Performance!F is in the same row index +1 (header offset)
+        for col_idx, letter in ((2, "H"), (3, "I"), (4, "J")):
+            cell = ws.cell(
+                row=row, column=col_idx,
+                value=_sumifs_eur_audit(letter, week, pid),
+            )
+            cell.number_format = FMT_EUR
+        cell = ws.cell(row=row, column=5, value=f"=B{row}-C{row}-D{row}")
+        cell.number_format = FMT_EUR
+        # Performance!F is contribution in euros (same /100 convention).
+        # ROUND-to-cents both sides so floating-point equality is robust.
         ws.cell(
             row=row, column=6,
-            value=f"=IF(E{row}=Performance!F{row}, \"yes\", \"NO — investigate\")",
+            value=(
+                f'=IF(ROUND(E{row},2)=ROUND(Performance!F{row},2),'
+                f'"yes","NO — investigate")'
+            ),
         )
         row += 1
 
