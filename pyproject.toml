@@ -57,6 +57,12 @@ ignore = [
     "RUF003",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Streamlit entry point needs a sys.path bootstrap so Cloud can import the
+# local `src.*` package when running the file directly without a
+# pip-install. That forces module-level imports to follow the bootstrap.
+"src/ui/app.py" = ["E402"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = false

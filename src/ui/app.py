@@ -6,6 +6,21 @@ Launch with::
 """
 from __future__ import annotations
 
+# --- sys.path bootstrap for Streamlit Community Cloud ---------------------
+# Cloud invokes this file directly via `streamlit run src/ui/app.py` with
+# the repo root as CWD but does NOT pip-install the local project, so the
+# absolute `from src...` imports below would raise ModuleNotFoundError.
+# Adding the repo root to sys.path here makes the file work whether it's
+# launched directly (Cloud) or via `python -m` / editable install (local).
+# Must run BEFORE any `from src...` import.
+import os as _os
+import sys as _sys
+
+_REPO_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", ".."))
+if _REPO_ROOT not in _sys.path:
+    _sys.path.insert(0, _REPO_ROOT)
+# --------------------------------------------------------------------------
+
 import os
 from pathlib import Path
 
